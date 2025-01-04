@@ -486,7 +486,14 @@ mod tests {
         drop(executor);
 
         // assert it stopped
-        let container = docker.inspect_container(&container_id, None).await.unwrap();
+        let container = match docker.inspect_container(&container_id, None).await {
+            // If it's gone already we're good
+            Err(e) if e.to_string().contains("No such container") => {
+                return;
+            }
+            Ok(container) => container,
+            Err(e) => panic!("Error inspecting container: {e}"),
+        };
         let status = container.state.as_ref().unwrap().status;
         assert!(
             status == Some(ContainerStateStatusEnum::REMOVING)
