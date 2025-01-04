@@ -1,6 +1,13 @@
 [package]
 name = "swiftide-docker-executor"
 version = "0.1.0"
+description = "A docker executor for swiftide agent tools"
+license = "MIT"
+readme = "README.md"
+keywords = ["llm", "rag", "ai", "data", "openai"]
+homepage = "https://swiftide.rs"
+repository = "https://github.com/bosun-ai/swiftide-docker-executor"
+
 edition = "2021"
 
 [dependencies]
