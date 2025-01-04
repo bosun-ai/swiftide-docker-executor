@@ -1,6 +1,9 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput, ToolExecutor};
 use tokio::io::AsyncReadExt as _;
 use tracing::{error, info};
@@ -45,6 +48,12 @@ impl Default for DockerExecutor {
             working_dir: ".".into(),
             dockerfile: "Dockerfile".into(),
         }
+    }
+}
+
+impl From<RunningDockerExecutor> for Arc<dyn ToolExecutor> {
+    fn from(val: RunningDockerExecutor) -> Self {
+        Arc::new(val) as Arc<dyn ToolExecutor>
     }
 }
 
