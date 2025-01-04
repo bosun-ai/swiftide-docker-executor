@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 swiftide-core = "0.16.0"
+swiftide-agents = "0.16.0"
 
 bollard = "0.18"
 thiserror = "2.0"
