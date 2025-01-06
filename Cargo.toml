@@ -14,7 +14,7 @@ edition = "2021"
 swiftide-core = "0.16.0"
 swiftide-agents = "0.16.0"
 
-bollard = "0.18"
+bollard = { version = "0.18", features = ["buildkit"] }
 thiserror = "2.0"
 async-trait = "0.1"
 ignore = "0.4"
