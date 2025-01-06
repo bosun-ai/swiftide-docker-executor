@@ -67,13 +67,6 @@ impl DockerExecutor {
     pub fn with_image_name(&mut self, name: impl Into<String>) -> &mut Self {
         self.image_name = name.into();
 
-        if cfg!(debug_assertions) {
-            // Parallel tests can cause conflicts with the same image name
-            // So we add an extra uuid to the image name as well
-            let random_suffix = uuid::Uuid::new_v4().to_string();
-            self.image_name = format!("{}-{}", self.image_name, random_suffix);
-        }
-
         self
     }
 
