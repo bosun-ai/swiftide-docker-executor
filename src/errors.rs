@@ -9,6 +9,9 @@ pub enum DockerExecutorError {
 
     #[error("error building context for image")]
     Context(#[from] ContextError),
+
+    #[error("container state missing for {0}")]
+    ContainerStateMissing(String),
 }
 
 #[derive(Error, Debug)]
