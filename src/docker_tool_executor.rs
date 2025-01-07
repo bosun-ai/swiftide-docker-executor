@@ -1,6 +1,8 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
+use dirs::{home_dir, runtime_dir};
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -21,6 +23,8 @@ use ignore::WalkBuilder;
 use tokio_tar::{Builder, Header};
 
 use crate::{ContextError, DockerExecutorError};
+
+const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
 
 #[derive(Clone)]
 pub struct RunningDockerExecutor {
@@ -158,14 +162,15 @@ impl RunningDockerExecutor {
             }
         }
 
+        let socket_path = get_socket_path();
         let config = Config {
             image: Some(image_name.as_str()),
             tty: Some(true),
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
-                binds: Some(vec![String::from(
-                    "/var/run/docker.sock:/var/run/docker.sock",
-                )]),
+                binds: Some(vec![String::from(&format!(
+                    "{socket_path}:/var/run/docker.sock"
+                ))]),
                 ..Default::default()
             }),
             ..Default::default()
@@ -351,6 +356,35 @@ async fn build_context_as_tar(context_path: &Path) -> Result<Vec<u8>, ContextErr
     let result = tar.into_inner().await?;
 
     Ok(result.clone())
+}
+
+/// Lovingly copied from testcontainers-rs
+/// Reliably gets the path to the docker socket
+fn get_socket_path() -> String {
+    validate_path("/var/run/docker.sock".into())
+        .or_else(|| {
+            runtime_dir()
+                .and_then(|dir| validate_path(format!("{}/.docker/run/docker.sock", dir.display())))
+        })
+        .or_else(|| {
+            home_dir()
+                .and_then(|dir| validate_path(format!("{}/.docker/run/docker.sock", dir.display())))
+        })
+        .or_else(|| {
+            home_dir().and_then(|dir| {
+                validate_path(format!("{}/.docker/desktop/docker.sock", dir.display()))
+            })
+        })
+        .map(|p| format!("unix://{p}"))
+        .unwrap_or(DEFAULT_DOCKER_SOCKET.into())
+}
+
+fn validate_path(path: String) -> Option<String> {
+    if Path::new(&path).exists() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
