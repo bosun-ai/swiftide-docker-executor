@@ -161,6 +161,7 @@ impl RunningDockerExecutor {
         let config = Config {
             image: Some(image_name.as_str()),
             tty: Some(true),
+            cmd: Some(vec!["sleep", "infinity"]),
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
                 binds: Some(vec![String::from(
@@ -558,6 +559,35 @@ mod tests {
             .with_context_path(context_path.path())
             .with_image_name("test-custom")
             .with_dockerfile("Dockerfile.custom")
+            .to_owned()
+            .start()
+            .await
+            .unwrap();
+
+        let output = executor
+            .exec_cmd(&Command::shell("echo hello"))
+            .await
+            .unwrap();
+        assert_eq!(output.to_string(), "hello");
+    }
+
+    #[test_log::test(tokio::test(flavor = "multi_thread"))]
+    async fn test_nullifies_cmd() {
+        let context_path = tempfile::tempdir().unwrap();
+
+        let mut dockerfile_content = std::fs::read_to_string("Dockerfile").unwrap();
+
+        // Add a cmd that will exit right away
+        dockerfile_content.push('\n');
+        dockerfile_content.push_str("CMD [\"sh\", \"-c\", \"exit 0\"]");
+
+        // Now write it to the temp dir
+        std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
+
+        let executor = DockerExecutor::default()
+            .with_context_path(context_path.path())
+            .with_image_name("test-null-cmd")
+            .with_dockerfile("Dockerfile")
             .to_owned()
             .start()
             .await
