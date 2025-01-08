@@ -1,6 +1,6 @@
 [package]
 name = "swiftide-docker-executor"
-version = "0.1.1"
+version = "0.2.0"
 description = "A docker executor for swiftide agent tools"
 license = "MIT"
 readme = "README.md"
