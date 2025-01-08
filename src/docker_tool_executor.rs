@@ -375,7 +375,6 @@ fn get_socket_path() -> String {
                 validate_path(format!("{}/.docker/desktop/docker.sock", dir.display()))
             })
         })
-        .map(|p| format!("unix://{p}"))
         .unwrap_or(DEFAULT_DOCKER_SOCKET.into())
 }
 
