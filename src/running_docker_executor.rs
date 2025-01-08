@@ -89,6 +89,7 @@ impl RunningDockerExecutor {
             image: Some(image_name.as_str()),
             tty: Some(true),
             cmd: Some(vec!["sleep", "infinity"]),
+            entrypoint: Some(vec![""]),
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
                 binds: Some(vec![String::from(
