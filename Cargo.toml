@@ -11,8 +11,8 @@ repository = "https://github.com/bosun-ai/swiftide-docker-executor"
 edition = "2021"
 
 [dependencies]
-swiftide-core = "0.16.1"
-swiftide-agents = "0.16.1"
+swiftide-core = "0.16"
+swiftide-agents = "0.16"
 
 
 bollard = { version = "0.18", features = ["buildkit"] }
@@ -22,11 +22,11 @@ ignore = "0.4"
 tokio = { version = "1", default-features = false }
 tokio-tar = "0.3"
 uuid = { version = "1.11", features = ["v4"] }
-tracing = "0.1.41"
-indoc = "2.0.5"
-anyhow = "1.0.95"
-dirs = "5.0.1"
+tracing = "0.1"
+indoc = "2.0"
+anyhow = "1.0"
+dirs = "5.0"
 
 [dev-dependencies]
-test-log = "0.2.16"
-tempfile = "3.15.0"
+test-log = "0.2"
+tempfile = "3.15"
