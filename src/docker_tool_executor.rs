@@ -17,6 +17,7 @@ use bollard::{
     },
     exec::{CreateExecOptions, StartExecResults},
     image::BuildImageOptions,
+    secret::{ContainerState, ContainerStateStatusEnum},
     Docker,
 };
 use ignore::WalkBuilder;
@@ -197,6 +198,30 @@ impl RunningDockerExecutor {
             container_id,
             docker,
         })
+    }
+
+    /// Returns the underlying bollard status of the container
+    ///
+    /// Useful for checking if the executor is running or not
+    pub async fn container_state(&self) -> Result<ContainerState, DockerExecutorError> {
+        let container = self
+            .docker
+            .inspect_container(&self.container_id, None)
+            .await?;
+
+        container.state.ok_or_else(|| {
+            DockerExecutorError::ContainerStateMissing(self.container_id.to_string())
+        })
+    }
+
+    /// Check if the executor and its underlying container is running
+    ///
+    /// Will ignore any errors and assume it is not if there are
+    pub async fn is_running(&self) -> bool {
+        self.container_state()
+            .await
+            .map(|state| state.status == Some(ContainerStateStatusEnum::RUNNING))
+            .unwrap_or(false)
     }
 
     async fn exec_shell(&self, cmd: &str) -> Result<CommandOutput, CommandError> {
@@ -601,5 +626,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(output.to_string(), "hello");
+    }
+
+    #[test_log::test(tokio::test(flavor = "multi_thread"))]
+    async fn test_container_state() {
+        let executor = DockerExecutor::default()
+            .with_context_path(".")
+            .with_image_name("test-state")
+            .to_owned()
+            .start()
+            .await
+            .unwrap();
+
+        let state = executor.container_state().await.unwrap();
+        assert_eq!(state.status, Some(ContainerStateStatusEnum::RUNNING));
+        assert!(executor.is_running().await);
     }
 }
