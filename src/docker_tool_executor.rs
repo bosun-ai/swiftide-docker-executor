@@ -2,7 +2,6 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use dirs::{home_dir, runtime_dir};
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
 };
