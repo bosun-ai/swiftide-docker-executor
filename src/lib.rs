@@ -22,8 +22,15 @@
 //! # Ok(())
 //! # }
 //! ```
+mod context_builder;
 mod docker_tool_executor;
 mod errors;
+mod running_docker_executor;
 
+#[cfg(test)]
+mod tests;
+
+pub use context_builder::*;
 pub use docker_tool_executor::*;
 pub use errors::*;
+pub use running_docker_executor::*;
