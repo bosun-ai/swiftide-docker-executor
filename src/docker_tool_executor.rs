@@ -67,6 +67,3 @@ impl DockerExecutor {
         .await
     }
 }
-
-// Iterate over all the files in the context directory and adds it to an in memory
-// tar. Respects .gitignore and .dockerignore.

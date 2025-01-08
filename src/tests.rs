@@ -272,3 +272,18 @@ async fn test_nullifies_entrypoint() {
         .unwrap();
     assert_eq!(output.to_string(), "hello");
 }
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_container_state() {
+    let executor = DockerExecutor::default()
+        .with_context_path(".")
+        .with_image_name("test-state")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let state = executor.container_state().await.unwrap();
+    assert_eq!(state.status, Some(ContainerStateStatusEnum::RUNNING));
+    assert!(executor.is_running().await);
+}

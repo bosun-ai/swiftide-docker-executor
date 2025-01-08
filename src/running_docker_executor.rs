@@ -1,10 +1,13 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
+use dirs::{home_dir, runtime_dir};
 use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput};
 use tracing::{error, info};
 use uuid::Uuid;
+
+const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
 
 use bollard::{
     container::{
@@ -12,6 +15,7 @@ use bollard::{
     },
     exec::{CreateExecOptions, StartExecResults},
     image::BuildImageOptions,
+    secret::{ContainerState, ContainerStateStatusEnum},
     Docker,
 };
 
@@ -85,6 +89,7 @@ impl RunningDockerExecutor {
             }
         }
 
+        let socket_path = get_socket_path();
         let config = Config {
             image: Some(image_name.as_str()),
             tty: Some(true),
@@ -92,9 +97,7 @@ impl RunningDockerExecutor {
             entrypoint: Some(vec![""]),
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
-                binds: Some(vec![String::from(
-                    "/var/run/docker.sock:/var/run/docker.sock",
-                )]),
+                binds: Some(vec![format!("{socket_path}:/var/run/docker.sock")]),
                 ..Default::default()
             }),
             ..Default::default()
@@ -121,6 +124,30 @@ impl RunningDockerExecutor {
             container_id,
             docker,
         })
+    }
+
+    /// Returns the underlying bollard status of the container
+    ///
+    /// Useful for checking if the executor is running or not
+    pub async fn container_state(&self) -> Result<ContainerState, DockerExecutorError> {
+        let container = self
+            .docker
+            .inspect_container(&self.container_id, None)
+            .await?;
+
+        container.state.ok_or_else(|| {
+            DockerExecutorError::ContainerStateMissing(self.container_id.to_string())
+        })
+    }
+
+    /// Check if the executor and its underlying container is running
+    ///
+    /// Will ignore any errors and assume it is not if there are
+    pub async fn is_running(&self) -> bool {
+        self.container_state()
+            .await
+            .map(|state| state.status == Some(ContainerStateStatusEnum::RUNNING))
+            .unwrap_or(false)
     }
 
     async fn exec_shell(&self, cmd: &str) -> Result<CommandOutput, CommandError> {
@@ -239,5 +266,33 @@ impl Drop for RunningDockerExecutor {
         if let Err(e) = result {
             tracing::warn!(error = %e, "Error stopping container, might not be stopped");
         }
+    }
+}
+
+/// Lovingly copied from testcontainers-rs
+/// Reliably gets the path to the docker socket
+fn get_socket_path() -> String {
+    validate_path("/var/run/docker.sock".into())
+        .or_else(|| {
+            runtime_dir()
+                .and_then(|dir| validate_path(format!("{}/.docker/run/docker.sock", dir.display())))
+        })
+        .or_else(|| {
+            home_dir()
+                .and_then(|dir| validate_path(format!("{}/.docker/run/docker.sock", dir.display())))
+        })
+        .or_else(|| {
+            home_dir().and_then(|dir| {
+                validate_path(format!("{}/.docker/desktop/docker.sock", dir.display()))
+            })
+        })
+        .unwrap_or(DEFAULT_DOCKER_SOCKET.into())
+}
+
+fn validate_path(path: String) -> Option<String> {
+    if Path::new(&path).exists() {
+        Some(path)
+    } else {
+        None
     }
 }
