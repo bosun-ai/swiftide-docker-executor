@@ -27,36 +27,44 @@ impl Default for DockerExecutor {
 }
 
 impl DockerExecutor {
+    /// Set the path to build the context from (default ".")
     pub fn with_context_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.context_path = path.into();
 
         self
     }
 
+    /// Set the name of the image to build (default "docker-executor")
     pub fn with_image_name(&mut self, name: impl Into<String>) -> &mut Self {
         self.image_name = name.into();
 
         self
     }
 
+    /// Overwite the uuid that is added as suffix to the running container
     pub fn with_container_uuid(&mut self, uuid: impl Into<Uuid>) -> &mut Self {
         self.container_uuid = uuid.into();
 
         self
     }
 
+    /// Ovewrite the dockerfile to use (default "Dockerfile")
     pub fn with_dockerfile(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.dockerfile = path.into();
         self
     }
 
     #[allow(dead_code)]
+    /// Override the working directory (default ".")
     pub fn with_working_dir(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.working_dir = path.into();
 
         self
     }
 
+    /// Starts the docker executor
+    ///
+    /// Note that on dropping the `RunningDockerExecutor`, the container will be stopped
     pub async fn start(self) -> Result<RunningDockerExecutor, DockerExecutorError> {
         RunningDockerExecutor::start(
             self.container_uuid,
