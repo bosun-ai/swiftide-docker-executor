@@ -41,14 +41,14 @@ impl DockerExecutor {
         self
     }
 
-    /// Overwite the uuid that is added as suffix to the running container
+    /// Overwrite the uuid that is added as suffix to the running container
     pub fn with_container_uuid(&mut self, uuid: impl Into<Uuid>) -> &mut Self {
         self.container_uuid = uuid.into();
 
         self
     }
 
-    /// Ovewrite the dockerfile to use (default "Dockerfile")
+    /// Overwrite the dockerfile to use (default "Dockerfile")
     pub fn with_dockerfile(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.dockerfile = path.into();
         self

@@ -11,7 +11,7 @@ const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
 
 use bollard::{
     container::{
-        Config, CreateContainerOptions, KillContainerOptions, LogOutput, StartContainerOptions,
+        Config, CreateContainerOptions, LogOutput, RemoveContainerOptions, StartContainerOptions,
     },
     exec::{CreateExecOptions, StartExecResults},
     image::BuildImageOptions,
@@ -255,9 +255,13 @@ impl Drop for RunningDockerExecutor {
         let result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 self.docker
-                    .kill_container(
+                    .remove_container(
                         &self.container_id,
-                        Some(KillContainerOptions { signal: "SIGKILL" }),
+                        Some(RemoveContainerOptions {
+                            force: true,
+                            v: true,
+                            ..Default::default()
+                        }),
                     )
                     .await
             })
