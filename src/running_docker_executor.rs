@@ -16,7 +16,7 @@ use bollard::{
     exec::{CreateExecOptions, StartExecResults},
     image::BuildImageOptions,
     secret::{ContainerState, ContainerStateStatusEnum},
-    Docker,
+    Docker, API_DEFAULT_VERSION,
 };
 
 use crate::{ContextBuilder, DockerExecutorError};
@@ -54,7 +54,8 @@ impl RunningDockerExecutor {
         dockerfile: &Path,
         image_name: &str,
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
-        let docker = Docker::connect_with_socket_defaults()?;
+        let socket_path = get_socket_path();
+        let docker = Docker::connect_with_socket(&socket_path, 120, API_DEFAULT_VERSION)?;
 
         tracing::warn!(
             "Creating archive for context from {}",
@@ -89,7 +90,6 @@ impl RunningDockerExecutor {
             }
         }
 
-        let socket_path = get_socket_path();
         let config = Config {
             image: Some(image_name.as_str()),
             tty: Some(true),
