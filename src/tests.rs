@@ -3,7 +3,7 @@ use std::path::Path;
 use bollard::secret::ContainerStateStatusEnum;
 use swiftide_core::{Command, ToolExecutor as _};
 
-use crate::DockerExecutor;
+use crate::{DockerExecutor, DockerExecutorError};
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_runs_docker_and_echos() {
@@ -286,4 +286,33 @@ async fn test_container_state() {
     let state = executor.container_state().await.unwrap();
     assert_eq!(state.status, Some(ContainerStateStatusEnum::RUNNING));
     assert!(executor.is_running().await);
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_invalid_dockerfile() {
+    let context_path = tempfile::tempdir().unwrap();
+
+    let mut dockerfile_content = std::fs::read_to_string("Dockerfile").unwrap();
+
+    // Add a cmd that will exit right away
+    dockerfile_content.push('\n');
+    dockerfile_content.push_str("SHOULD GIVE AN ERROR");
+
+    // Now write it to the temp dir
+    std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
+
+    let err = DockerExecutor::default()
+        .with_context_path(context_path.path())
+        .with_image_name("test-invalid")
+        .with_dockerfile("Dockerfile")
+        .to_owned()
+        .start()
+        .await
+        .unwrap_err();
+
+    let DockerExecutorError::Bollard(err) = err else {
+        panic!("Expected Bollard error")
+    };
+
+    assert!(err.to_string().contains("unknown instruction: SHOULD"));
 }

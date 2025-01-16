@@ -4,7 +4,7 @@ use dirs::{home_dir, runtime_dir};
 use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput};
-use tracing::{error, info};
+use tracing::info;
 use uuid::Uuid;
 
 const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
@@ -21,7 +21,7 @@ use bollard::{
 
 use crate::{ContextBuilder, DockerExecutorError};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RunningDockerExecutor {
     pub container_id: String,
     pub(crate) docker: Docker,
@@ -67,8 +67,7 @@ impl RunningDockerExecutor {
         let build_options = BuildImageOptions {
             t: image_name.as_str(),
             rm: true,
-            #[allow(clippy::unnecessary_to_owned)]
-            dockerfile: &dockerfile.to_string_lossy().into_owned(),
+            dockerfile: &dockerfile.to_string_lossy(),
             ..Default::default()
         };
 
@@ -83,9 +82,10 @@ impl RunningDockerExecutor {
                             info!("{}", stream);
                         }
                     }
-                    // TODO: This can happen if 2 threads build the same image in parallel, and
-                    // should be handled
-                    Err(e) => error!("Error during build: {:?}", e),
+                    Err(e) => {
+                        tracing::error!("Error building image: {e:#}");
+                        return Err(e.into());
+                    }
                 }
             }
         }
