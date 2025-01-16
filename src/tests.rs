@@ -42,6 +42,7 @@ async fn test_context_present() {
         .unwrap();
 
     assert!(ls.to_string().contains("Cargo.toml"));
+    assert!(ls.to_string().contains(".git"));
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use ignore::WalkBuilder;
+use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use tokio::io::AsyncReadExt as _;
 use tokio_tar::{Builder, Header};
 
@@ -17,12 +17,13 @@ impl ContextBuilder {
         let mut tar = Builder::new(buffer);
 
         // Ensure we *do* include the .git directory
-        // let overrides = OverrideBuilder::new(context_path).add(".git")?.build()?;
+        let overrides = OverrideBuilder::new(context_path).add(".git")?.build()?;
 
         for entry in WalkBuilder::new(context_path)
             // .overrides(overrides)
             .hidden(false)
             .add_custom_ignore_filename(".dockerignore")
+            .overrides(overrides)
             .build()
         {
             let entry = entry?;
