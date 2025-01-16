@@ -25,7 +25,7 @@ uuid = { version = "1.12", features = ["v4"] }
 tracing = "0.1"
 indoc = "2.0"
 anyhow = "1.0"
-dirs = "5.0"
+dirs = "6.0"
 
 [dev-dependencies]
 test-log = "0.2"
