@@ -11,9 +11,7 @@ repository = "https://github.com/bosun-ai/swiftide-docker-executor"
 edition = "2021"
 
 [dependencies]
-swiftide-core = "0.16"
-swiftide-agents = "0.16"
-
+swiftide-core = "0.17"
 
 bollard = { version = "0.18", features = ["buildkit"] }
 thiserror = "2.0"
@@ -29,5 +27,6 @@ anyhow = "1.0"
 dirs = "6.0"
 
 [dev-dependencies]
+swiftide-agents = "0.17"
 test-log = "0.2"
 tempfile = "3.15"
