@@ -61,7 +61,7 @@ impl RunningDockerExecutor {
             "Creating archive for context from {}",
             context_path.display()
         );
-        let context = ContextBuilder::build_from_path(context_path).await?;
+        let context = ContextBuilder::from_path(context_path)?.build_tar().await?;
 
         let image_name = format!("kwaak-{image_name}");
         let build_options = BuildImageOptions {

@@ -2088,6 +2088,7 @@ dependencies = [
  "tokio-tar",
  "tracing",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]

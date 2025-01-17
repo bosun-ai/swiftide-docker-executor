@@ -46,6 +46,58 @@ async fn test_context_present() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_overrides_include_git_respects_ignore() {
+    let context_path = tempfile::tempdir().unwrap();
+    // add a docker ignore file with .git
+    std::fs::write(
+        context_path.path().join(".dockerignore"),
+        ".git\nignored_file",
+    )
+    .unwrap();
+    std::fs::write(context_path.path().join("ignored_file"), "hello").unwrap();
+
+    std::process::Command::new("cp")
+        .arg("Dockerfile")
+        .arg(context_path.path().join("Dockerfile"))
+        .output()
+        .unwrap();
+
+    std::process::Command::new("git")
+        .arg("init")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
+    let local_ls = std::process::Command::new("ls")
+        .arg("-a")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
+    let output = std::str::from_utf8(&local_ls.stdout).unwrap();
+    dbg!(&output);
+    assert!(output.contains(".git"));
+
+    let executor = DockerExecutor::default()
+        .with_context_path(context_path.path())
+        .with_image_name("tests-git")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let ls = executor
+        .exec_cmd(&Command::Shell("ls -a".to_string()))
+        .await
+        .unwrap();
+    dbg!(&ls.to_string());
+
+    assert!(ls.to_string().contains(".git"));
+    assert!(!ls.to_string().contains("target"));
+    assert!(!ls.to_string().contains("ignored_file"));
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_write_and_read_file_with_quotes() {
     let content = r#"This is a "test" content with 'quotes' and special characters: \n \t"#;
     let path = Path::new("test_file.txt");
@@ -260,7 +312,7 @@ async fn test_nullifies_entrypoint() {
 
     let executor = DockerExecutor::default()
         .with_context_path(context_path.path())
-        .with_image_name("test-null-cmd")
+        .with_image_name("test-null-entrypoint")
         .with_dockerfile("Dockerfile")
         .to_owned()
         .start()
