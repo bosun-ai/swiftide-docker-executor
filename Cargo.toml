@@ -19,6 +19,7 @@ bollard = { version = "0.18", features = ["buildkit"] }
 thiserror = "2.0"
 async-trait = "0.1"
 ignore = "0.4"
+walkdir = "2.5"
 tokio = { version = "1", default-features = false }
 tokio-tar = "0.3"
 uuid = { version = "1.12", features = ["v4"] }

@@ -16,8 +16,11 @@ pub enum DockerExecutorError {
 
 #[derive(Error, Debug)]
 pub enum ContextError {
-    #[error("error iterating over directory")]
-    DirWalker(#[from] ignore::Error),
+    #[error("error while trying to ignore files")]
+    FailedIgnore(#[from] ignore::Error),
+
+    #[error("failed while walking files in context")]
+    Walk(#[from] walkdir::Error),
 
     #[error("error reading file")]
     Io(#[from] std::io::Error),
