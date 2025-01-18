@@ -14,6 +14,7 @@ type ContextArchive = Vec<u8>;
 pub struct ContextBuilder {
     context_path: PathBuf,
     ignore: Gitignore,
+    global: Option<Gitignore>,
 }
 
 impl ContextBuilder {
@@ -28,15 +29,20 @@ impl ContextBuilder {
             tracing::warn!(?err, "Error adding .dockerignore");
         }
 
-        let (gitignore, maybe_error) = gitignore.build_global();
+        let gitignore = gitignore.build()?;
 
-        if let Some(err) = maybe_error {
-            return Err(ContextError::FailedIgnore(err));
-        }
+        let (global_gitignore, maybe_error) = Gitignore::global();
+        let maybe_global = if let Some(err) = maybe_error {
+            tracing::warn!(?err, "Error adding global gitignore");
+            None
+        } else {
+            Some(global_gitignore)
+        };
 
         Ok(Self {
             context_path: path,
             ignore: gitignore,
+            global: maybe_global,
         })
     }
 
@@ -56,6 +62,19 @@ impl ContextBuilder {
                 path = path.as_ref().display()
             );
             return false;
+        }
+
+        if let Some(global) = &self.global {
+            if global
+                .matched_path_or_any_parents(relative_path, false)
+                .is_ignore()
+            {
+                tracing::debug!(
+                    "ignoring {path} as it is ignored by global gitignore",
+                    path = path.as_ref().display()
+                );
+                return true;
+            }
         }
 
         self.ignore
