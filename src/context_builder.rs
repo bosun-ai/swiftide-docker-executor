@@ -42,10 +42,19 @@ impl ContextBuilder {
 
     fn is_ignored(&self, path: impl AsRef<Path>) -> bool {
         let Ok(relative_path) = path.as_ref().strip_prefix(&self.context_path) else {
+            tracing::debug!(
+                "not ignoring {path} as it seems to be not prefixed by {prefix}",
+                path = path.as_ref().display(),
+                prefix = self.context_path.to_string_lossy()
+            );
             return false;
         };
 
         if relative_path.starts_with(".git") {
+            tracing::debug!(
+                "not ignoring {path} as it seems to be a git file",
+                path = path.as_ref().display()
+            );
             return false;
         }
 
