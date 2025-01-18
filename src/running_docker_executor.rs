@@ -230,9 +230,13 @@ impl RunningDockerExecutor {
 
         // If the directory or file does not exist, create it
         if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result {
-            if ["No such file or directory", "Directory nonexistent"]
-                .iter()
-                .any(|&s| write_file.output.contains(s))
+            if [
+                "no such file or directory",
+                "directory nonexistent",
+                "nonexistent directory",
+            ]
+            .iter()
+            .any(|&s| write_file.output.to_lowercase().contains(s))
             {
                 let path = path.parent().context("No parent directory")?;
                 let mkdircmd = format!("mkdir -p {}", path.display());
