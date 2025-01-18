@@ -96,6 +96,7 @@ impl RunningDockerExecutor {
         let config = Config {
             image: Some(image_name_with_tag.as_str()),
             cmd: Some(vec!["sleep", "infinity"]),
+            tty: Some(true),
             entrypoint: Some(vec![""]),
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
