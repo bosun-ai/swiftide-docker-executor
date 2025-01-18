@@ -8,8 +8,6 @@ use crate::{DockerExecutorError, RunningDockerExecutor};
 pub struct DockerExecutor {
     context_path: PathBuf,
     image_name: String,
-    #[allow(dead_code)]
-    working_dir: PathBuf,
     dockerfile: PathBuf,
     container_uuid: Uuid,
 }
@@ -20,7 +18,6 @@ impl Default for DockerExecutor {
             container_uuid: Uuid::new_v4(),
             context_path: ".".into(),
             image_name: "docker-executor".into(),
-            working_dir: ".".into(),
             dockerfile: "Dockerfile".into(),
         }
     }
@@ -51,14 +48,6 @@ impl DockerExecutor {
     /// Overwrite the dockerfile to use (default "Dockerfile")
     pub fn with_dockerfile(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.dockerfile = path.into();
-        self
-    }
-
-    #[allow(dead_code)]
-    /// Override the working directory (default ".")
-    pub fn with_working_dir(&mut self, path: impl Into<PathBuf>) -> &mut Self {
-        self.working_dir = path.into();
-
         self
     }
 

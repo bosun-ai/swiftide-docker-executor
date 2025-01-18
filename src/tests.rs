@@ -28,14 +28,11 @@ async fn test_context_present() {
     let executor = DockerExecutor::default()
         .with_context_path(".")
         .with_image_name("tests")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
         .unwrap();
 
-    // Verify that the working directory is set correctly
-    // TODO: Annoying this needs to be updated when files change in the root. Think of something better.
     let ls = executor
         .exec_cmd(&Command::Shell("ls -a".to_string()))
         .await
@@ -105,7 +102,6 @@ async fn test_write_and_read_file_with_quotes() {
     let executor = DockerExecutor::default()
         .with_context_path(".")
         .with_image_name("test-files")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
@@ -143,7 +139,6 @@ async fn test_write_and_read_file_markdown() {
     let executor = DockerExecutor::default()
         .with_context_path(".")
         .with_image_name("test-files-md")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
@@ -167,7 +162,6 @@ async fn test_assert_container_stopped_on_drop() {
     let executor = DockerExecutor::default()
         .with_context_path(".")
         .with_image_name("test-drop")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
@@ -222,7 +216,6 @@ async fn test_create_file_subdirectory_that_does_not_exist() {
     let executor = DockerExecutor::default()
         .with_context_path(".")
         .with_image_name("test-files-missing-dir")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
