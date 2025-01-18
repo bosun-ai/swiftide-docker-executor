@@ -1,9 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::{
+    os::unix::fs::MetadataExt as _,
+    path::{Path, PathBuf},
+};
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 // use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use tokio::io::AsyncReadExt as _;
-use tokio_tar::{Builder, Header};
+use tokio_tar::{Builder, EntryType, Header};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::ContextError;
@@ -95,12 +98,47 @@ impl ContextBuilder {
             let Ok(entry) = entry else { continue };
             let path = entry.path();
 
-            if !path.is_file() {
-                tracing::debug!(path = ?path, "Ignore non-file");
+            let Ok(relative_path) = path.strip_prefix(&self.context_path) else {
+                continue;
+            };
+
+            if path.is_dir() {
+                let _ = tar.append_path(relative_path).await;
                 continue;
             }
+
             if self.is_ignored(path) {
                 tracing::debug!(path = ?path, "Ignored file");
+                continue;
+            }
+
+            if path.is_symlink() {
+                let Ok(link_target) = tokio::fs::read_link(path).await else {
+                    continue;
+                }; // The target of the symlink
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                let mut header = Header::new_gnu();
+
+                // Indicate it's a symlink
+                header.set_entry_type(EntryType::Symlink);
+                // The tar specification requires setting the link name for a symlink
+                header.set_link_name(link_target)?;
+
+                // Set ownership, permissions, etc.
+                header.set_uid(metadata.uid() as u64);
+                header.set_gid(metadata.gid() as u64);
+                // For a symlink, the "mode" is often ignored by many tools,
+                // but we’ll set it anyway to match the source:
+                header.set_mode(metadata.mode());
+                // Set modification time (use 0 or a real timestamp as you prefer)
+                header.set_mtime(metadata.mtime() as u64);
+                // Symlinks don’t store file data in the tar, so size is 0
+                header.set_size(0);
+
+                tar.append_data(&mut header, path, tokio::io::empty())
+                    .await?;
                 continue;
             }
 
