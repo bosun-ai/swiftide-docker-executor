@@ -104,7 +104,7 @@ mod tests {
     use std::io::Write;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_is_ignored() {
         let dir = tempdir().unwrap();
         let context_path = dir.path().to_path_buf();
@@ -135,7 +135,7 @@ mod tests {
         assert!(!context_builder.is_ignored(&txt_file));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_adds_git_even_if_in_ignore() {
         let dir = tempdir().unwrap();
         let context_path = dir.path().to_path_buf();
@@ -149,7 +149,7 @@ mod tests {
         assert!(!context_builder.is_ignored(".git"));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_works_without_gitignore() {
         let dir = tempdir().unwrap();
         let context_path = dir.path().to_path_buf();
