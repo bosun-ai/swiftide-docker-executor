@@ -12,6 +12,9 @@ pub enum DockerExecutorError {
 
     #[error("container state missing for {0}")]
     ContainerStateMissing(String),
+
+    #[error("error initializing client")]
+    Init(#[from] ClientError),
 }
 
 #[derive(Error, Debug)]
@@ -27,6 +30,12 @@ pub enum ContextError {
 
     #[error("failed to convert to relative path")]
     RelativePath(#[from] StripPrefixError),
+}
+
+#[derive(Error, Debug)]
+pub enum ClientError {
+    #[error("failed to initialize client")]
+    Init(bollard::errors::Error),
 }
 
 impl From<Infallible> for DockerExecutorError {

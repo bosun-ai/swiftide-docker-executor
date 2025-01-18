@@ -14,6 +14,7 @@ type ContextArchive = Vec<u8>;
 pub struct ContextBuilder {
     context_path: PathBuf,
     ignore: Gitignore,
+    global: Option<Gitignore>,
 }
 
 impl ContextBuilder {
@@ -28,25 +29,52 @@ impl ContextBuilder {
             tracing::warn!(?err, "Error adding .dockerignore");
         }
 
-        let (gitignore, maybe_error) = gitignore.build_global();
+        let gitignore = gitignore.build()?;
 
-        if let Some(err) = maybe_error {
-            return Err(ContextError::FailedIgnore(err));
-        }
+        let (global_gitignore, maybe_error) = Gitignore::global();
+        let maybe_global = if let Some(err) = maybe_error {
+            tracing::warn!(?err, "Error adding global gitignore");
+            None
+        } else {
+            Some(global_gitignore)
+        };
 
         Ok(Self {
             context_path: path,
             ignore: gitignore,
+            global: maybe_global,
         })
     }
 
     fn is_ignored(&self, path: impl AsRef<Path>) -> bool {
         let Ok(relative_path) = path.as_ref().strip_prefix(&self.context_path) else {
+            tracing::debug!(
+                "not ignoring {path} as it seems to be not prefixed by {prefix}",
+                path = path.as_ref().display(),
+                prefix = self.context_path.to_string_lossy()
+            );
             return false;
         };
 
         if relative_path.starts_with(".git") {
+            tracing::debug!(
+                "not ignoring {path} as it seems to be a git file",
+                path = path.as_ref().display()
+            );
             return false;
+        }
+
+        if let Some(global) = &self.global {
+            if global
+                .matched_path_or_any_parents(relative_path, false)
+                .is_ignore()
+            {
+                tracing::debug!(
+                    "ignoring {path} as it is ignored by global gitignore",
+                    path = path.as_ref().display()
+                );
+                return true;
+            }
         }
 
         self.ignore
@@ -104,7 +132,7 @@ mod tests {
     use std::io::Write;
     use tempfile::tempdir;
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_is_ignored() {
         let dir = tempdir().unwrap();
         let context_path = dir.path().to_path_buf();
@@ -135,7 +163,7 @@ mod tests {
         assert!(!context_builder.is_ignored(&txt_file));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_adds_git_even_if_in_ignore() {
         let dir = tempdir().unwrap();
         let context_path = dir.path().to_path_buf();
@@ -149,7 +177,7 @@ mod tests {
         assert!(!context_builder.is_ignored(".git"));
     }
 
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn test_works_without_gitignore() {
         let dir = tempdir().unwrap();
         let context_path = dir.path().to_path_buf();

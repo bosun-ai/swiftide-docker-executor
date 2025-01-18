@@ -5,9 +5,13 @@ use swiftide_core::{Command, ToolExecutor as _};
 
 use crate::{DockerExecutor, DockerExecutorError};
 
+// A much smaller busybox image for faster tests
+const TEST_DOCKERFILE: &str = "Dockerfile.tests";
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_runs_docker_and_echos() {
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
         .with_image_name("tests")
         .to_owned()
@@ -26,16 +30,14 @@ async fn test_runs_docker_and_echos() {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_context_present() {
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
         .with_image_name("tests")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
         .unwrap();
 
-    // Verify that the working directory is set correctly
-    // TODO: Annoying this needs to be updated when files change in the root. Think of something better.
     let ls = executor
         .exec_cmd(&Command::Shell("ls -a".to_string()))
         .await
@@ -57,7 +59,7 @@ async fn test_overrides_include_git_respects_ignore() {
     std::fs::write(context_path.path().join("ignored_file"), "hello").unwrap();
 
     std::process::Command::new("cp")
-        .arg("Dockerfile")
+        .arg(TEST_DOCKERFILE)
         .arg(context_path.path().join("Dockerfile"))
         .output()
         .unwrap();
@@ -103,9 +105,9 @@ async fn test_write_and_read_file_with_quotes() {
     let path = Path::new("test_file.txt");
 
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
         .with_image_name("test-files")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
@@ -141,9 +143,9 @@ async fn test_write_and_read_file_markdown() {
     let path = Path::new("test_file.txt");
 
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
         .with_image_name("test-files-md")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
@@ -165,9 +167,9 @@ async fn test_write_and_read_file_markdown() {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_assert_container_stopped_on_drop() {
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
         .with_image_name("test-drop")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
@@ -220,9 +222,9 @@ async fn test_create_file_subdirectory_that_does_not_exist() {
     let path = Path::new("doesnot/exist/test_file.txt");
 
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
         .with_image_name("test-files-missing-dir")
-        .with_working_dir("/app")
         .to_owned()
         .start()
         .await
@@ -253,6 +255,7 @@ async fn test_custom_dockerfile() {
         .unwrap();
 
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(context_path.path())
         .with_image_name("test-custom")
         .with_dockerfile("Dockerfile.custom")
@@ -282,6 +285,7 @@ async fn test_nullifies_cmd() {
     std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
 
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(context_path.path())
         .with_image_name("test-null-cmd")
         .with_dockerfile("Dockerfile")
@@ -311,6 +315,7 @@ async fn test_nullifies_entrypoint() {
     std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
 
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(context_path.path())
         .with_image_name("test-null-entrypoint")
         .with_dockerfile("Dockerfile")
@@ -329,6 +334,7 @@ async fn test_nullifies_entrypoint() {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_container_state() {
     let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
         .with_image_name("test-state")
         .to_owned()
@@ -355,6 +361,7 @@ async fn test_invalid_dockerfile() {
     std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
 
     let err = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(context_path.path())
         .with_image_name("test-invalid")
         .with_dockerfile("Dockerfile")

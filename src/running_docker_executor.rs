@@ -1,13 +1,10 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
-use dirs::{home_dir, runtime_dir};
 use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput};
 use tracing::info;
 use uuid::Uuid;
-
-const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
 
 use bollard::{
     container::{
@@ -16,15 +13,14 @@ use bollard::{
     exec::{CreateExecOptions, StartExecResults},
     image::BuildImageOptions,
     secret::{ContainerState, ContainerStateStatusEnum},
-    Docker, API_DEFAULT_VERSION,
 };
 
-use crate::{ContextBuilder, DockerExecutorError};
+use crate::{client::Client, ContextBuilder, DockerExecutorError};
 
 #[derive(Clone, Debug)]
 pub struct RunningDockerExecutor {
     pub container_id: String,
-    pub(crate) docker: Docker,
+    pub(crate) docker: Arc<Client>,
 }
 
 impl From<RunningDockerExecutor> for Arc<dyn ToolExecutor> {
@@ -54,8 +50,7 @@ impl RunningDockerExecutor {
         dockerfile: &Path,
         image_name: &str,
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
-        let socket_path = get_socket_path();
-        let docker = Docker::connect_with_socket(&socket_path, 120, API_DEFAULT_VERSION)?;
+        let docker = Client::lazy_client().await?;
 
         tracing::warn!(
             "Creating archive for context from {}",
@@ -90,6 +85,7 @@ impl RunningDockerExecutor {
             }
         }
 
+        let socket_path = &docker.socket_path;
         let config = Config {
             image: Some(image_name.as_str()),
             tty: Some(true),
@@ -230,9 +226,13 @@ impl RunningDockerExecutor {
 
         // If the directory or file does not exist, create it
         if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result {
-            if ["No such file or directory", "Directory nonexistent"]
-                .iter()
-                .any(|&s| write_file.output.contains(s))
+            if [
+                "no such file or directory",
+                "directory nonexistent",
+                "nonexistent directory",
+            ]
+            .iter()
+            .any(|&s| write_file.output.to_lowercase().contains(s))
             {
                 let path = path.parent().context("No parent directory")?;
                 let mkdircmd = format!("mkdir -p {}", path.display());
@@ -270,33 +270,5 @@ impl Drop for RunningDockerExecutor {
         if let Err(e) = result {
             tracing::warn!(error = %e, "Error stopping container, might not be stopped");
         }
-    }
-}
-
-/// Lovingly copied from testcontainers-rs
-/// Reliably gets the path to the docker socket
-fn get_socket_path() -> String {
-    validate_path("/var/run/docker.sock".into())
-        .or_else(|| {
-            runtime_dir()
-                .and_then(|dir| validate_path(format!("{}/.docker/run/docker.sock", dir.display())))
-        })
-        .or_else(|| {
-            home_dir()
-                .and_then(|dir| validate_path(format!("{}/.docker/run/docker.sock", dir.display())))
-        })
-        .or_else(|| {
-            home_dir().and_then(|dir| {
-                validate_path(format!("{}/.docker/desktop/docker.sock", dir.display()))
-            })
-        })
-        .unwrap_or(DEFAULT_DOCKER_SOCKET.into())
-}
-
-fn validate_path(path: String) -> Option<String> {
-    if Path::new(&path).exists() {
-        Some(path)
-    } else {
-        None
     }
 }

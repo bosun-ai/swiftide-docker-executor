@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
+  RUST_LOG: "debug"
+  RUST_BACKTRACE: 1
 
 jobs:
   lint:
@@ -47,4 +49,4 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: "Test"
-        run: cargo nextest run
+        run: cargo nextest run -j 2
