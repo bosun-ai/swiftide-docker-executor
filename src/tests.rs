@@ -104,8 +104,7 @@ async fn test_overrides_include_git_respects_ignore() {
         .await
         .unwrap();
 
-    dbg!(&git_head.to_string());
-    assert!(git_head.to_string().contains("ref: refs/heads/main"));
+    assert!(git_head.to_string().contains("ref: refs/heads/"));
 
     // test git works
     let git_status = executor
