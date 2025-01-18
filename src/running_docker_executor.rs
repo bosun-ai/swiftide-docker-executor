@@ -1,6 +1,5 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
-use dirs::{home_dir, runtime_dir};
 use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput};
@@ -14,7 +13,6 @@ use bollard::{
     exec::{CreateExecOptions, StartExecResults},
     image::BuildImageOptions,
     secret::{ContainerState, ContainerStateStatusEnum},
-    Docker, API_DEFAULT_VERSION,
 };
 
 use crate::{client::Client, ContextBuilder, DockerExecutorError};
