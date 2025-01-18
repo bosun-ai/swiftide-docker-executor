@@ -22,6 +22,7 @@
 //! # Ok(())
 //! # }
 //! ```
+mod client;
 mod context_builder;
 mod docker_tool_executor;
 mod errors;
