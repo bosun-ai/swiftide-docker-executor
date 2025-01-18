@@ -89,14 +89,32 @@ async fn test_overrides_include_git_respects_ignore() {
         .unwrap();
 
     let ls = executor
-        .exec_cmd(&Command::Shell("ls -a".to_string()))
+        .exec_cmd(&Command::Shell("ls -aRl".to_string()))
         .await
         .unwrap();
-    dbg!(&ls.to_string());
 
+    eprintln!("{ls}");
     assert!(ls.to_string().contains(".git"));
     assert!(!ls.to_string().contains("target"));
     assert!(!ls.to_string().contains("ignored_file"));
+
+    // read .git/HEAD to check if git works
+    let git_head = executor
+        .exec_cmd(&Command::Shell("cat .git/HEAD".to_string()))
+        .await
+        .unwrap();
+
+    assert!(git_head.to_string().contains("ref: refs/heads/"));
+
+    // test git works
+    let git_status = executor
+        .exec_cmd(&Command::Shell("git status".to_string()))
+        .await
+        .unwrap();
+
+    eprintln!("{git_status}");
+
+    assert!(git_status.to_string().contains("No commits yet"));
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]

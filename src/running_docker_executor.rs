@@ -58,9 +58,16 @@ impl RunningDockerExecutor {
         );
         let context = ContextBuilder::from_path(context_path)?.build_tar().await?;
 
-        let image_name = format!("kwaak-{image_name}");
+        let tag = container_uuid
+            .to_string()
+            .split_once('-')
+            .map(|(tag, _)| tag)
+            .unwrap_or("latest")
+            .to_string();
+
+        let image_name_with_tag = format!("{image_name}:{tag}");
         let build_options = BuildImageOptions {
-            t: image_name.as_str(),
+            t: image_name_with_tag.as_str(),
             rm: true,
             dockerfile: &dockerfile.to_string_lossy(),
             ..Default::default()
@@ -87,9 +94,9 @@ impl RunningDockerExecutor {
 
         let socket_path = &docker.socket_path;
         let config = Config {
-            image: Some(image_name.as_str()),
-            tty: Some(true),
+            image: Some(image_name_with_tag.as_str()),
             cmd: Some(vec!["sleep", "infinity"]),
+            tty: Some(true),
             entrypoint: Some(vec![""]),
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
@@ -99,7 +106,7 @@ impl RunningDockerExecutor {
             ..Default::default()
         };
 
-        let container_name = format!("kwaak-{image_name}-{container_uuid}");
+        let container_name = format!("{image_name}-{container_uuid}");
         let create_options = CreateContainerOptions {
             name: container_name.as_str(),
             ..Default::default()
