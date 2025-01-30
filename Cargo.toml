@@ -10,6 +10,11 @@ repository = "https://github.com/bosun-ai/swiftide-docker-executor"
 
 edition = "2021"
 
+[[bin]]
+name = "swiftide-docker-executor"
+path = "src/main.rs"
+
+
 [dependencies]
 swiftide-core = "0.17"
 
@@ -25,6 +30,12 @@ tracing = "0.1"
 indoc = "2.0"
 anyhow = "1.0"
 dirs = "6.0"
+
+tonic = "0.12"
+prost = "0.13"
+
+[build-dependencies]
+tonic-build = "0.12"
 
 [dev-dependencies]
 swiftide-agents = "0.17"
