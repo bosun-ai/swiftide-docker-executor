@@ -35,3 +35,15 @@ pub use context_builder::*;
 pub use docker_tool_executor::*;
 pub use errors::*;
 pub use running_docker_executor::*;
+
+use rust_embed::{EmbeddedFile, RustEmbed};
+
+#[derive(RustEmbed)]
+#[folder = "src/resources"]
+pub struct ServerAssets;
+
+impl ServerAssets {
+    pub fn get_swiftide_docker_service() -> EmbeddedFile {
+        Self::get("swiftide-docker-service").expect("Failed to get embedded server")
+    }
+}

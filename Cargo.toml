@@ -1,43 +1,9 @@
-[package]
-name = "swiftide-docker-executor"
-version = "0.4.1"
-description = "A docker executor for swiftide agent tools"
-license = "MIT"
-readme = "README.md"
-keywords = ["llm", "rag", "ai", "data", "openai"]
-homepage = "https://swiftide.rs"
-repository = "https://github.com/bosun-ai/swiftide-docker-executor"
+[workspace]
+members = ["swiftide-docker*"]
+resolver = "2"
 
-edition = "2021"
-
-[[bin]]
-name = "swiftide-docker-executor"
-path = "src/main.rs"
-
-
-[dependencies]
-swiftide-core = "0.17"
-
-bollard = { version = "0.18", features = ["buildkit"] }
-thiserror = "2.0"
-async-trait = "0.1"
-ignore = "0.4"
-walkdir = "2.5"
-tokio = { version = "1", default-features = false }
-tokio-tar = "0.3"
-uuid = { version = "1.12", features = ["v4"] }
-tracing = "0.1"
-indoc = "2.0"
-anyhow = "1.0"
-dirs = "6.0"
-
+[workspace.dependencies]
 tonic = "0.12"
 prost = "0.13"
-
-[build-dependencies]
 tonic-build = "0.12"
-
-[dev-dependencies]
-swiftide-agents = "0.17"
-test-log = { version = "0.2", features = ["trace"] }
-tempfile = "3.15"
+tokio = { version = "1", features = ["full"] }

@@ -82,6 +82,7 @@ async fn test_overrides_include_git_respects_ignore() {
 
     let executor = DockerExecutor::default()
         .with_context_path(context_path.path())
+        .with_dockerfile(TEST_DOCKERFILE)
         .with_image_name("tests-git")
         .to_owned()
         .start()
@@ -267,13 +268,12 @@ async fn test_custom_dockerfile() {
     let context_path = tempfile::tempdir().unwrap();
 
     std::process::Command::new("cp")
-        .arg("Dockerfile")
+        .arg("Dockerfile.tests")
         .arg(context_path.path().join("Dockerfile.custom"))
         .output()
         .unwrap();
 
     let executor = DockerExecutor::default()
-        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(context_path.path())
         .with_image_name("test-custom")
         .with_dockerfile("Dockerfile.custom")

@@ -1,21 +1,30 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
-use std::{path::Path, sync::Arc};
+use bollard::{
+    container::{
+        Config, CreateContainerOptions, LogOutput, LogsOptions, RemoveContainerOptions,
+        StartContainerOptions, UploadToContainerOptions,
+    },
+    exec::{CreateExecOptions, StartExecResults},
+    image::{BuildImageOptions, CommitContainerOptions},
+    secret::{ContainerState, ContainerStateStatusEnum, PortBinding},
+    Docker,
+};
+use shell::shell_executor_client::ShellExecutorClient;
+use std::{collections::HashMap, path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
-use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput};
+use swiftide_core::{
+    prelude::{StreamExt as _, TryStreamExt as _},
+    Command, CommandError, CommandOutput,
+};
 use tracing::info;
 use uuid::Uuid;
 
-use bollard::{
-    container::{
-        Config, CreateContainerOptions, LogOutput, RemoveContainerOptions, StartContainerOptions,
-    },
-    exec::{CreateExecOptions, StartExecResults},
-    image::BuildImageOptions,
-    secret::{ContainerState, ContainerStateStatusEnum},
-};
+use crate::{client::Client, ContextBuilder, DockerExecutorError, ServerAssets};
 
-use crate::{client::Client, ContextBuilder, DockerExecutorError};
+pub mod shell {
+    tonic::include_proto!("shell");
+}
 
 #[derive(Clone, Debug)]
 pub struct RunningDockerExecutor {
@@ -93,14 +102,24 @@ impl RunningDockerExecutor {
         }
 
         let socket_path = &docker.socket_path;
+        let internal_port = "50051/tcp";
+        // TODO: Port should be random
+        let port_bindings = HashMap::from([(
+            internal_port.to_string(),
+            Some(vec![PortBinding {
+                host_ip: Some("0.0.0.0".to_string()),
+                host_port: Some("50051".to_string()),
+            }]),
+        )]);
         let config = Config {
             image: Some(image_name_with_tag.as_str()),
-            cmd: Some(vec!["sleep", "infinity"]),
+            cmd: Some(vec!["/bin/sh"]),
             tty: Some(true),
             entrypoint: Some(vec![""]),
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
                 binds: Some(vec![format!("{socket_path}:/var/run/docker.sock")]),
+                port_bindings: Some(port_bindings),
                 ..Default::default()
             }),
             ..Default::default()
@@ -114,14 +133,95 @@ impl RunningDockerExecutor {
 
         tracing::warn!("Creating container from image {image_name}");
         let container_id = docker
-            .create_container(Some(create_options), config)
+            .create_container(Some(create_options), config.clone())
             .await?
             .id;
 
-        tracing::warn!("Starting container {container_id}");
+        tracing::warn!("Starting temporary container {container_id}");
         docker
             .start_container(&container_id, None::<StartContainerOptions<String>>)
             .await?;
+
+        tracing::warn!("Uploading embedded server to container {container_id}");
+        upload_embedded_server(&docker, &container_id).await?;
+
+        // Now commit the result to the same image name
+        let commit_options = CommitContainerOptions {
+            container: container_id.as_str(),
+            repo: image_name,
+            tag: &tag,
+            ..Default::default()
+        };
+
+        // fml bollard
+        let empty = HashMap::<(), ()>::new();
+        let mut exposed_ports = HashMap::new();
+        exposed_ports.insert("50051/tcp", empty);
+
+        let config = Config {
+            cmd: Some(vec!["server"]),
+            exposed_ports: Some(exposed_ports),
+            // attach_stdout: Some(true),
+            // attach_stderr: Some(true),
+            ..config
+        };
+        tracing::warn!("Committing container {container_id} to image {image_name}");
+        let commit_result = docker
+            .commit_container(commit_options, config.clone())
+            .await?;
+
+        tracing::warn!("Committed container {commit_result:?}");
+
+        tracing::warn!("Stopping temporary container {container_id}");
+        // stop the container
+        docker
+            .remove_container(
+                &container_id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    v: true,
+                    ..Default::default()
+                }),
+            )
+            .await?;
+
+        // create a new container from the committed image
+        let container_id = docker
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: container_name.as_str(),
+                    ..Default::default()
+                }),
+                config.clone(),
+            )
+            .await?
+            .id;
+
+        tracing::warn!("Starting actual container {container_id}");
+        // start the committed container
+        docker
+            .start_container(&container_id, None::<StartContainerOptions<String>>)
+            .await?;
+
+        let mut count = 0;
+        while let Some(log) = docker
+            .logs(
+                &container_id,
+                Some(LogsOptions::<&str> {
+                    stdout: true,
+                    stderr: true,
+                    ..Default::default()
+                }),
+            )
+            .next()
+            .await
+        {
+            count += 1;
+            dbg!(log);
+            if count > 10 {
+                break;
+            }
+        }
 
         Ok(RunningDockerExecutor {
             container_id,
@@ -154,58 +254,28 @@ impl RunningDockerExecutor {
     }
 
     async fn exec_shell(&self, cmd: &str) -> Result<CommandOutput, CommandError> {
-        let cmd = vec!["sh", "-c", cmd];
-        tracing::debug!("Executing command {cmd}", cmd = cmd.join(" "));
-
-        let exec = self
-            .docker
-            .create_exec(
-                &self.container_id,
-                CreateExecOptions {
-                    attach_stdout: Some(true),
-                    attach_stderr: Some(true),
-                    cmd: Some(cmd),
-                    ..Default::default()
-                },
-            )
+        let mut client = ShellExecutorClient::connect("http://127.0.0.1:50051")
             .await
-            .context("Failed to create docker exec")?
-            .id;
+            .map_err(anyhow::Error::from)?;
 
-        let mut stdout = String::new();
-        let mut stderr = String::new();
+        let request = tonic::Request::new(shell::ShellRequest {
+            command: cmd.to_string(),
+        });
 
-        if let StartExecResults::Attached { mut output, .. } = self
-            .docker
-            .start_exec(&exec, None)
+        let response = client
+            .exec_shell(request)
             .await
-            .context("Failed to start docker exec")?
-        {
-            while let Some(Ok(msg)) = output.next().await {
-                match msg {
-                    LogOutput::StdErr { .. } => stderr.push_str(&msg.to_string()),
-                    LogOutput::StdOut { .. } => stdout.push_str(&msg.to_string()),
-                    _ => {
-                        stderr
-                            .push_str("Command appears to wait for input, which is not supported");
-                        break;
-                    }
-                }
-            }
-        } else {
-            todo!();
-        }
+            .map_err(anyhow::Error::from)?;
 
-        let exec_inspect = self
-            .docker
-            .inspect_exec(&exec)
-            .await
-            .context("Failed to inspect docker exec result")?;
-        let exit_code = exec_inspect.exit_code.unwrap_or(0);
+        let shell::ShellResponse {
+            stdout,
+            stderr,
+            exit_code,
+        } = response.into_inner();
 
-        // Trim both stdout and stderr to remove surrounding whitespace and newlines
+        // // Trim both stdout and stderr to remove surrounding whitespace and newlines
         let output = stdout.trim().to_string() + stderr.trim();
-
+        //
         if exit_code == 0 {
             Ok(output.into())
         } else {
@@ -278,4 +348,38 @@ impl Drop for RunningDockerExecutor {
             tracing::warn!(error = %e, "Error stopping container, might not be stopped");
         }
     }
+}
+
+pub async fn upload_embedded_server(
+    docker: &Docker,
+    container_id: &str,
+) -> Result<(), DockerExecutorError> {
+    let file_data = ServerAssets::get_swiftide_docker_service();
+
+    // Create an in-memory tar archive with one file: "server" (executable)
+    let mut tar_buffer = Vec::new();
+    let mut builder = tokio_tar::Builder::new(tar_buffer);
+    {
+        let mut header = tokio_tar::Header::new_gnu();
+        header.set_size(file_data.data.len() as u64);
+        header.set_mode(0o755); // Make it executable
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "server", file_data.data.as_ref())
+            .await?;
+        builder.finish().await?;
+    }
+
+    // Upload to /usr/local/bin or somewhere in the container
+    let options = Some(UploadToContainerOptions {
+        path: "/usr/local/bin",
+        ..Default::default()
+    });
+
+    let bytes = builder.into_inner().await?.into();
+    docker
+        .upload_to_container(container_id, options, bytes)
+        .await?;
+
+    Ok(())
 }

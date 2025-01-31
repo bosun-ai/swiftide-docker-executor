@@ -9,7 +9,7 @@ use tokio::io::AsyncReadExt as _;
 use tokio_tar::{Builder, EntryType, Header};
 use walkdir::{DirEntry, WalkDir};
 
-use crate::ContextError;
+use crate::{ContextError, ServerAssets};
 
 type ContextArchive = Vec<u8>;
 

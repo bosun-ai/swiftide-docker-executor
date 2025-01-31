@@ -15,6 +15,9 @@ pub enum DockerExecutorError {
 
     #[error("error initializing client")]
     Init(#[from] ClientError),
+
+    #[error("error with io {0}")]
+    Io(#[from] std::io::Error),
 }
 
 #[derive(Error, Debug)]
