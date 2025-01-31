@@ -1,5 +1,5 @@
 # This dockerfile is used to build the swiftide-docker-service image
-FROM rust:${RUST_VERSION} as builder
+FROM rust:1.83-slim as builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   protobuf-compiler \
@@ -10,18 +10,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY . /app
 WORKDIR /app
 
-RUN cargo build --release
+RUN cargo build --release -p swiftide-docker-service
 
-COPY target/release/swiftide-docker-service /usr/bin/swiftide-docker-service
+RUN cp target/release/swiftide-docker-service /usr/bin/swiftide-docker-service
 
-FROM ubuntu:stable-slim
+FROM ubuntu:latest
 
 COPY --from=builder /usr/bin/swiftide-docker-service /usr/bin/swiftide-docker-service
 
 # Installs some common depedencies we need for kwaak :')'
 # They can be added to the grpc service later
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  ripgrep fd-find git ssh curl && \
+  ripgrep fd-find git ssh curl \
   && rm -rf /var/lib/apt/lists/* \
   && cp /usr/bin/fdfind /usr/bin/fd
 

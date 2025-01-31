@@ -8,7 +8,6 @@ fn main() {
     // println!("cargo:rerun-if-changed=../swiftide-docker-service/src");
 
     tonic_build::compile_protos("../proto/shell.proto").unwrap();
-
     // NOTE: Earlier attempt to embed the binary
     // Problem is that this requires cross compilation on _all_ platforms
 
