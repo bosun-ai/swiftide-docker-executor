@@ -11,7 +11,7 @@ use bollard::{
     Docker,
 };
 use shell::shell_executor_client::ShellExecutorClient;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, io::Write, path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{
     prelude::{StreamExt as _, TryStreamExt as _},
@@ -20,7 +20,9 @@ use swiftide_core::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{client::Client, ContextBuilder, DockerExecutorError, ServerAssets};
+use crate::{
+    client::Client, dockerfile_mangler::mangle, ContextBuilder, DockerExecutorError, ServerAssets,
+};
 
 pub mod shell {
     tonic::include_proto!("shell");
@@ -61,6 +63,17 @@ impl RunningDockerExecutor {
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
         let docker = Client::lazy_client().await?;
 
+        let mangled_dockerfile = mangle(dockerfile).await?;
+
+        let mut tmp_dockerfile = tempfile::NamedTempFile::new_in(context_path)?;
+        tmp_dockerfile.write_all(mangled_dockerfile.content.as_bytes())?;
+        tmp_dockerfile.flush()?;
+
+        tracing::warn!(
+            "Temporary dockerfile\n {}",
+            tokio::fs::read_to_string(tmp_dockerfile.path()).await?
+        );
+
         tracing::warn!(
             "Creating archive for context from {}",
             context_path.display()
@@ -75,10 +88,22 @@ impl RunningDockerExecutor {
             .to_string();
 
         let image_name_with_tag = format!("{image_name}:{tag}");
+        let relative_dockerfile = tmp_dockerfile
+            .path()
+            .strip_prefix(context_path)
+            .with_context(|| {
+                format!(
+                    "Could not strip prefix {} from {}",
+                    tmp_dockerfile.path().display(),
+                    context_path.display()
+                )
+            })
+            .map_err(DockerExecutorError::Start)?;
+
         let build_options = BuildImageOptions {
             t: image_name_with_tag.as_str(),
             rm: true,
-            dockerfile: &dockerfile.to_string_lossy(),
+            dockerfile: &relative_dockerfile.to_string_lossy(),
             ..Default::default()
         };
 

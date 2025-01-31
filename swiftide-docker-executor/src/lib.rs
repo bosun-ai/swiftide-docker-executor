@@ -25,6 +25,7 @@
 mod client;
 mod context_builder;
 mod docker_tool_executor;
+mod dockerfile_mangler;
 mod errors;
 mod running_docker_executor;
 

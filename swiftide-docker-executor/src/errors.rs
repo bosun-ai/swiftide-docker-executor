@@ -18,6 +18,12 @@ pub enum DockerExecutorError {
 
     #[error("error with io {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("error transforming dockerfile")]
+    Transform(#[from] MangleError),
+
+    #[error("error starting container")]
+    Start(anyhow::Error),
 }
 
 #[derive(Error, Debug)]
@@ -39,6 +45,14 @@ pub enum ContextError {
 pub enum ClientError {
     #[error("failed to initialize client")]
     Init(bollard::errors::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum MangleError {
+    #[error("Failed to read Dockerfile: {0}")]
+    DockerfileReadError(std::io::Error), // #[]
+                                         // IoError(std::io::Error),
+                                         // Utf8Error(std::string::FromUtf8Error),
 }
 
 impl From<Infallible> for DockerExecutorError {
