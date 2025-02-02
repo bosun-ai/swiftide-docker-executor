@@ -42,17 +42,15 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
-    use tokio::runtime::Runtime;
 
-    #[test]
-    fn test_mangle() {
+    #[tokio::test]
+    async fn test_mangle() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("Dockerfile");
         let mut file = File::create(&file_path).unwrap();
         writeln!(file, "FROM alpine").unwrap();
 
-        let rt = Runtime::new().unwrap();
-        let result = rt.block_on(mangle(&file_path)).unwrap();
+        let result = mangle(&file_path).await.unwrap();
 
         assert!(result
             .content
