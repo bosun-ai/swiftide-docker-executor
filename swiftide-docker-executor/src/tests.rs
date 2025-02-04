@@ -399,7 +399,6 @@ async fn test_invalid_dockerfile() {
     std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
 
     let err = DockerExecutor::default()
-        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(context_path.path())
         .with_image_name("test-invalid")
         .with_dockerfile("Dockerfile")

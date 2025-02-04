@@ -62,7 +62,14 @@ impl RunningDockerExecutor {
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
         let docker = Client::lazy_client().await?;
 
-        let mangled_dockerfile = mangle(dockerfile).await?;
+        // If it's relative, assume it's in the context
+        let valid_dockerfile_path = if dockerfile.is_relative() {
+            context_path.join(dockerfile)
+        } else {
+            dockerfile.to_path_buf()
+        };
+
+        let mangled_dockerfile = mangle(&valid_dockerfile_path).await?;
 
         let mut tmp_dockerfile = tempfile::NamedTempFile::new_in(context_path)?;
         tmp_dockerfile.write_all(mangled_dockerfile.content.as_bytes())?;

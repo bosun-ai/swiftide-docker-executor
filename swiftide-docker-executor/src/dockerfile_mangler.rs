@@ -12,6 +12,8 @@ pub struct MangledDockerfile {
 }
 
 pub async fn mangle(path: &Path) -> Result<MangledDockerfile, MangleError> {
+    tracing::warn!("Mangling Dockerfile at {:?}", path);
+
     let this_crate = env!("CARGO_PKG_VERSION");
     let mut content = read_to_string(path)
         .await
