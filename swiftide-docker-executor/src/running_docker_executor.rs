@@ -136,12 +136,11 @@ impl RunningDockerExecutor {
 
         let socket_path = &docker.socket_path;
         let internal_port = "50051/tcp";
-        // TODO: Port should be random
         let port_bindings = HashMap::from([(
             internal_port.to_string(),
             Some(vec![PortBinding {
-                host_ip: Some("0.0.0.0".to_string()),
-                host_port: Some("".to_string()), // Use docker to get an ephemeral port
+                host_ip: Some("0.0.0.0".to_string()), // TODO: This is safe right?
+                host_port: Some("".to_string()),      // Use docker to get an ephemeral port
             }]),
         )]);
         let empty = HashMap::<(), ()>::new();
@@ -179,6 +178,8 @@ impl RunningDockerExecutor {
         docker
             .start_container(&container_id, None::<StartContainerOptions<String>>)
             .await?;
+
+        // TODO: Delete the temporary dockerfile
 
         let mut count = 0;
         while let Some(log) = docker
