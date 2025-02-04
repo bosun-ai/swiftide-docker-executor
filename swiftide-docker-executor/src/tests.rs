@@ -73,6 +73,22 @@ async fn test_overrides_include_git_respects_ignore() {
         .output()
         .unwrap();
 
+    // Make an initial commit
+    std::process::Command::new("git")
+        .arg("add")
+        .arg(".")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
+    std::process::Command::new("git")
+        .arg("commit")
+        .arg("-m")
+        .arg("Initial commit")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
     let local_ls = std::process::Command::new("ls")
         .arg("-aRl")
         .current_dir(context_path.path())
@@ -118,7 +134,8 @@ async fn test_overrides_include_git_respects_ignore() {
 
     eprintln!("{git_status}");
 
-    assert!(git_status.to_string().contains("No commits yet"));
+    // It's ignored so git will think it's deleted
+    assert!(git_status.to_string().contains("deleted:    ignored_file"));
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]

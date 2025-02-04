@@ -95,15 +95,22 @@ impl ContextBuilder {
         let mut tar = Builder::new(buffer);
 
         for entry in self.iter() {
-            let Ok(entry) = entry else { continue };
+            let Ok(entry) = entry else {
+                tracing::warn!(?entry, "Failed to read entry");
+                continue;
+            };
             let path = entry.path();
 
             let Ok(relative_path) = path.strip_prefix(&self.context_path) else {
+                tracing::warn!(?path, "Failed to strip prefix on path");
                 continue;
             };
 
             if path.is_dir() {
-                let _ = tar.append_path(relative_path).await;
+                tracing::debug!(path = ?path, "Adding directory to tar");
+                if let Err(err) = tar.append_path(relative_path).await {
+                    tracing::warn!(?err, "Failed to append path to tar");
+                }
                 continue;
             }
 
