@@ -19,6 +19,9 @@ async fn test_runs_docker_and_echos() {
         .await
         .unwrap();
 
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    assert!(executor.is_running().await, "Container should be running");
+
     let output = executor
         .exec_cmd(&Command::Shell("echo hello".to_string()))
         .await
