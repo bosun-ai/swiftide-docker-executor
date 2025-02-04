@@ -34,7 +34,7 @@ async fn test_runs_docker_and_echos() {
 async fn test_context_present() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE)
-        .with_context_path(".")
+        .with_context_path("../")
         .with_image_name("tests")
         .to_owned()
         .start()
