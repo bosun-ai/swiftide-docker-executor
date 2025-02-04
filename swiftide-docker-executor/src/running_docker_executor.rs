@@ -90,6 +90,9 @@ impl RunningDockerExecutor {
         let image_name_with_tag = format!("{image_name}:{tag}");
         let relative_dockerfile = tmp_dockerfile
             .path()
+            .canonicalize()
+            .context("failed to get full path")
+            .map_err(DockerExecutorError::Start)?
             .strip_prefix(
                 std::fs::canonicalize(context_path)
                     .context("failed to get full path")
@@ -98,11 +101,12 @@ impl RunningDockerExecutor {
             .with_context(|| {
                 format!(
                     "Could not strip prefix {} from {}",
+                    std::fs::canonicalize(context_path).unwrap().display(),
                     tmp_dockerfile.path().display(),
-                    context_path.display()
                 )
             })
-            .map_err(DockerExecutorError::Start)?;
+            .map_err(DockerExecutorError::Start)?
+            .to_path_buf();
 
         let build_options = BuildImageOptions {
             t: image_name_with_tag.as_str(),

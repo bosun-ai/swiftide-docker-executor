@@ -74,13 +74,13 @@ async fn test_overrides_include_git_respects_ignore() {
         .unwrap();
 
     let local_ls = std::process::Command::new("ls")
-        .arg("-a")
+        .arg("-aRl")
         .current_dir(context_path.path())
         .output()
         .unwrap();
 
     let output = std::str::from_utf8(&local_ls.stdout).unwrap();
-    dbg!(&output);
+    eprintln!("Local LS:\n {output}");
     assert!(output.contains(".git"));
 
     let executor = DockerExecutor::default()

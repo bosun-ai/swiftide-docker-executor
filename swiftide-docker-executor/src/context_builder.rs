@@ -113,12 +113,14 @@ impl ContextBuilder {
             }
 
             if path.is_symlink() {
+                tracing::debug!(path = ?path, "Adding symlink to tar");
                 let Ok(link_target) = tokio::fs::read_link(path).await else {
                     continue;
                 }; // The target of the symlink
                 let Ok(metadata) = entry.metadata() else {
                     continue;
                 };
+                tracing::debug!(link_target = ?link_target, "Symlink target");
                 let mut header = Header::new_gnu();
 
                 // Indicate it's a symlink
