@@ -1,12 +1,11 @@
 /// Adds copy statements to the Dockerfile to copy the built binary into the image.
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tokio::fs::read_to_string;
 
 use crate::MangleError;
 
 pub struct MangledDockerfile {
-    pub original_path: PathBuf,
     pub content: String,
 }
 
@@ -57,7 +56,6 @@ pub async fn mangle(path: &Path) -> Result<MangledDockerfile, MangleError> {
     );
     Ok(MangledDockerfile {
         content: new_dockerfile,
-        original_path: path.to_owned(),
     })
 }
 

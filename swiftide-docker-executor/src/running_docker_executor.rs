@@ -7,10 +7,7 @@ use bollard::{
 use shell::shell_executor_client::ShellExecutorClient;
 use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
-use swiftide_core::{
-    prelude::{StreamExt as _, TryStreamExt as _},
-    Command, CommandError, CommandOutput,
-};
+use swiftide_core::{Command, CommandError, CommandOutput};
 use uuid::Uuid;
 
 use crate::{
