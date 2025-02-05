@@ -44,9 +44,11 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      - uses: taiki-e/install-action@just
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: just docker-build-service
       - name: "Test"
         run: cargo nextest run -j 2
