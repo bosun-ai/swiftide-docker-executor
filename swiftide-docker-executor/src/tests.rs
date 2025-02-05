@@ -3,7 +3,7 @@ use std::path::Path;
 use bollard::secret::ContainerStateStatusEnum;
 use swiftide_core::{Command, ToolExecutor as _};
 
-use crate::{DockerExecutor, DockerExecutorError};
+use crate::{DockerExecutor, DockerExecutorError, ImageBuildError};
 
 // A much smaller busybox image for faster tests
 const TEST_DOCKERFILE: &str = "Dockerfile.tests";
@@ -19,7 +19,6 @@ async fn test_runs_docker_and_echos() {
         .await
         .unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     assert!(executor.is_running().await, "Container should be running");
 
     let output = executor
@@ -34,7 +33,6 @@ async fn test_runs_docker_and_echos() {
 async fn test_context_present() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE)
-        .with_context_path("../")
         .with_image_name("tests")
         .to_owned()
         .start()
@@ -46,8 +44,10 @@ async fn test_context_present() {
         .await
         .unwrap();
 
-    assert!(ls.to_string().contains("Cargo.toml"));
-    assert!(ls.to_string().contains(".git"));
+    assert!(
+        ls.to_string().contains("Cargo.toml"),
+        "Context did not contain `Cargo.toml`, actual:\n {ls}"
+    );
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -101,7 +101,7 @@ async fn test_overrides_include_git_respects_ignore() {
 
     let executor = DockerExecutor::default()
         .with_context_path(context_path.path())
-        .with_dockerfile(TEST_DOCKERFILE)
+        .with_dockerfile("Dockerfile")
         .with_image_name("tests-git")
         .to_owned()
         .start()
@@ -115,6 +115,7 @@ async fn test_overrides_include_git_respects_ignore() {
 
     eprintln!("{ls}");
     assert!(ls.to_string().contains(".git"));
+    assert!(!ls.to_string().contains("README.md"));
     assert!(!ls.to_string().contains("target"));
     assert!(!ls.to_string().contains("ignored_file"));
 
@@ -313,7 +314,7 @@ async fn test_custom_dockerfile() {
 async fn test_nullifies_cmd() {
     let context_path = tempfile::tempdir().unwrap();
 
-    let mut dockerfile_content = std::fs::read_to_string("Dockerfile").unwrap();
+    let mut dockerfile_content = std::fs::read_to_string("Dockerfile.tests").unwrap();
 
     // Add a cmd that will exit right away
     dockerfile_content.push('\n');
@@ -323,7 +324,7 @@ async fn test_nullifies_cmd() {
     std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
 
     let executor = DockerExecutor::default()
-        .with_dockerfile(TEST_DOCKERFILE)
+        .with_dockerfile("Dockerfile")
         .with_context_path(context_path.path())
         .with_image_name("test-null-cmd")
         .with_dockerfile("Dockerfile")
@@ -343,7 +344,7 @@ async fn test_nullifies_cmd() {
 async fn test_nullifies_entrypoint() {
     let context_path = tempfile::tempdir().unwrap();
 
-    let mut dockerfile_content = std::fs::read_to_string("Dockerfile").unwrap();
+    let mut dockerfile_content = std::fs::read_to_string("Dockerfile.tests").unwrap();
 
     // Add a cmd that will exit right away
     dockerfile_content.push('\n');
@@ -353,7 +354,7 @@ async fn test_nullifies_entrypoint() {
     std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
 
     let executor = DockerExecutor::default()
-        .with_dockerfile(TEST_DOCKERFILE)
+        .with_dockerfile("Dockerfile")
         .with_context_path(context_path.path())
         .with_image_name("test-null-entrypoint")
         .with_dockerfile("Dockerfile")
@@ -389,7 +390,7 @@ async fn test_container_state() {
 async fn test_invalid_dockerfile() {
     let context_path = tempfile::tempdir().unwrap();
 
-    let mut dockerfile_content = std::fs::read_to_string("Dockerfile").unwrap();
+    let mut dockerfile_content = std::fs::read_to_string("Dockerfile.tests").unwrap();
 
     // Add a cmd that will exit right away
     dockerfile_content.push('\n');
@@ -407,8 +408,8 @@ async fn test_invalid_dockerfile() {
         .await
         .unwrap_err();
 
-    let DockerExecutorError::Bollard(err) = err else {
-        panic!("Expected Bollard error")
+    let DockerExecutorError::ImageBuild(err) = err else {
+        panic!("{:#}", err);
     };
 
     assert!(err.to_string().contains("unknown instruction: SHOULD"));

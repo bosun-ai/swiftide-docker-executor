@@ -1,0 +1,10 @@
+---
+source: swiftide-docker-executor/src/dockerfile_mangler.rs
+expression: result.content
+---
+FROM alpine
+FROM ubuntu
+COPY --from=bosun-ai/swiftide-docker-service:[CARGO_PKG_VERSION] /usr/bin/swiftide-docker-service /usr/local/bin/swiftide-docker-service
+COPY --from=bosun-ai/swiftide-docker-service:[CARGO_PKG_VERSION] /usr/bin/rg /usr/local/bin/rg
+COPY --from=bosun-ai/swiftide-docker-service:[CARGO_PKG_VERSION] /usr/bin/fd /usr/local/bin/fd
+RUN echo hello world

@@ -23,10 +23,14 @@
 //! # }
 //! ```
 mod client;
+mod container_configurator;
+mod container_starter;
 mod context_builder;
 mod docker_tool_executor;
+mod dockerfile_manager;
 mod dockerfile_mangler;
 mod errors;
+mod image_builder;
 mod running_docker_executor;
 
 #[cfg(test)]

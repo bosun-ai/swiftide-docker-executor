@@ -20,7 +20,11 @@ use swiftide_core::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::{client::Client, dockerfile_mangler::mangle, ContextBuilder, DockerExecutorError};
+use crate::{
+    client::Client, container_configurator::ContainerConfigurator,
+    container_starter::ContainerStarter, dockerfile_manager::DockerfileManager,
+    dockerfile_mangler::mangle, image_builder::ImageBuilder, ContextBuilder, DockerExecutorError,
+};
 
 pub mod shell {
     tonic::include_proto!("shell");
@@ -62,31 +66,18 @@ impl RunningDockerExecutor {
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
         let docker = Client::lazy_client().await?;
 
-        // If it's relative, assume it's in the context
-        let valid_dockerfile_path = if dockerfile.is_relative() {
-            context_path.join(dockerfile)
-        } else {
-            dockerfile.to_path_buf()
-        };
+        // Prepare dockerfile
+        let dockerfile_manager = DockerfileManager::new(context_path);
+        let tmp_dockerfile = dockerfile_manager.prepare_dockerfile(dockerfile).await?;
 
-        let mangled_dockerfile = mangle(&valid_dockerfile_path).await?;
-
-        let mut tmp_dockerfile = tempfile::NamedTempFile::new_in(context_path)?;
-        tmp_dockerfile.write_all(mangled_dockerfile.content.as_bytes())?;
-        tmp_dockerfile.flush()?;
-
-        tracing::warn!(
-            "Temporary dockerfile {}\n {}",
-            tmp_dockerfile.path().display(),
-            tokio::fs::read_to_string(tmp_dockerfile.path()).await?
-        );
-
+        // Build context
         tracing::warn!(
             "Creating archive for context from {}",
             context_path.display()
         );
         let context = ContextBuilder::from_path(context_path)?.build_tar().await?;
 
+        // Build image
         let tag = container_uuid
             .to_string()
             .split_once('-')
@@ -94,139 +85,26 @@ impl RunningDockerExecutor {
             .unwrap_or("latest")
             .to_string();
 
-        let image_name_with_tag = format!("{image_name}:{tag}");
-        let relative_dockerfile = tmp_dockerfile
-            .path()
-            .canonicalize()
-            .context("failed to get full path")
-            .map_err(DockerExecutorError::Start)?
-            .strip_prefix(
-                std::fs::canonicalize(context_path)
-                    .context("failed to get full path")
-                    .map_err(DockerExecutorError::Start)?,
+        let image_builder = ImageBuilder::new(docker.clone());
+        let image_name_with_tag = image_builder
+            .build_image(
+                context_path,
+                context,
+                tmp_dockerfile.path(),
+                image_name,
+                &tag,
             )
-            .with_context(|| {
-                format!(
-                    "Could not strip prefix {} from {}",
-                    std::fs::canonicalize(context_path).unwrap().display(),
-                    tmp_dockerfile.path().display(),
-                )
-            })
-            .map_err(DockerExecutorError::Start)?
-            .to_path_buf();
-
-        let build_options = BuildImageOptions {
-            t: image_name_with_tag.as_str(),
-            rm: true,
-            dockerfile: &relative_dockerfile.to_string_lossy(),
-            ..Default::default()
-        };
-
-        tracing::warn!("Building docker image with name {image_name}");
-        {
-            let mut build_stream = docker.build_image(build_options, None, Some(context.into()));
-
-            while let Some(log) = build_stream.next().await {
-                match log {
-                    Ok(output) => {
-                        if let Some(stream) = output.stream {
-                            info!("{}", stream);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Error building image: {e:#}");
-                        return Err(e.into());
-                    }
-                }
-            }
-        }
-
-        let socket_path = &docker.socket_path;
-        let internal_port = "50051/tcp";
-        let port_bindings = HashMap::from([(
-            internal_port.to_string(),
-            Some(vec![PortBinding {
-                host_ip: Some("0.0.0.0".to_string()), // TODO: This is safe right?
-                host_port: Some("".to_string()),      // Use docker to get an ephemeral port
-            }]),
-        )]);
-        let empty = HashMap::<(), ()>::new();
-        let mut exposed_ports = HashMap::new();
-        exposed_ports.insert("50051/tcp", empty);
-
-        let config = Config {
-            image: Some(image_name_with_tag.as_str()),
-            cmd: Some(vec!["swiftide-docker-service"]),
-            tty: Some(true),
-            entrypoint: Some(vec![""]),
-            exposed_ports: Some(exposed_ports),
-            host_config: Some(bollard::models::HostConfig {
-                auto_remove: Some(true),
-                binds: Some(vec![format!("{socket_path}:/var/run/docker.sock")]),
-                port_bindings: Some(port_bindings),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        let container_name = format!("{image_name}-{container_uuid}");
-        let create_options = CreateContainerOptions {
-            name: container_name.as_str(),
-            ..Default::default()
-        };
-
-        tracing::warn!("Creating container from image {image_name}");
-        let container_id = docker
-            .create_container(Some(create_options), config.clone())
-            .await?
-            .id;
-
-        tracing::warn!("Starting container {container_id}");
-        docker
-            .start_container(&container_id, None::<StartContainerOptions<String>>)
             .await?;
 
-        // TODO: Delete the temporary dockerfile
+        // Configure container
+        let container_config = ContainerConfigurator::new(docker.socket_path.clone())
+            .create_container_config(&image_name_with_tag);
 
-        let mut count = 0;
-        while let Some(log) = docker
-            .logs(
-                &container_id,
-                Some(LogsOptions::<&str> {
-                    stdout: true,
-                    stderr: true,
-                    ..Default::default()
-                }),
-            )
-            .next()
-            .await
-        {
-            count += 1;
-            tracing::debug!("Executor Log: {log:?}");
-
-            if count > 10 {
-                break;
-            }
-        }
-
-        let container_info = docker.inspect_container(&container_id, None).await?;
-        let host_port = container_info
-            .network_settings
-            .and_then(|network_settings| network_settings.ports)
-            .and_then(|ports| {
-                ports.get(internal_port).and_then(|maybe_bindings| {
-                    maybe_bindings.as_ref().and_then(|bindings| {
-                        bindings
-                            .get(0)
-                            .and_then(|binding| binding.host_port.clone())
-                    })
-                })
-            })
-            .ok_or_else(|| {
-                DockerExecutorError::Start(anyhow::anyhow!(
-                    "Failed to retrieve random host port for container"
-                ))
-            })?;
+        // Start container
+        let container_starter = ContainerStarter::new(docker.clone());
+        let (container_id, host_port) = container_starter
+            .start_container(image_name, &container_uuid, container_config)
+            .await?;
 
         Ok(RunningDockerExecutor {
             container_id,
