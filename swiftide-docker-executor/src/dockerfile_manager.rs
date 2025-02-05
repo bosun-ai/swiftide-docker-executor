@@ -1,9 +1,8 @@
-use anyhow::Context as _;
 use std::io::Write;
 use std::path::Path;
 
 use crate::dockerfile_mangler::mangle;
-use crate::{DockerExecutorError, DockerfileError};
+use crate::DockerfileError;
 
 pub struct DockerfileManager {
     context_path: std::path::PathBuf,

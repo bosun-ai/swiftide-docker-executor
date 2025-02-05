@@ -40,5 +40,3 @@ pub use context_builder::*;
 pub use docker_tool_executor::*;
 pub use errors::*;
 pub use running_docker_executor::*;
-
-use rust_embed::{EmbeddedFile, RustEmbed};

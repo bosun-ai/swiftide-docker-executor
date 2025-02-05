@@ -4,7 +4,7 @@ use bollard::container::{Config, CreateContainerOptions, LogsOptions, StartConta
 use swiftide_core::prelude::StreamExt as _;
 use uuid::Uuid;
 
-use crate::{client::Client, ContainerStartError, DockerExecutorError};
+use crate::{client::Client, ContainerStartError};
 
 pub struct ContainerStarter {
     docker: Arc<Client>,

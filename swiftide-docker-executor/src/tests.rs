@@ -3,7 +3,7 @@ use std::path::Path;
 use bollard::secret::ContainerStateStatusEnum;
 use swiftide_core::{Command, ToolExecutor as _};
 
-use crate::{DockerExecutor, DockerExecutorError, ImageBuildError};
+use crate::{DockerExecutor, DockerExecutorError};
 
 // A much smaller busybox image for faster tests
 const TEST_DOCKERFILE: &str = "Dockerfile.tests";

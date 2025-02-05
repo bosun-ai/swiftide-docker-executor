@@ -1,5 +1,5 @@
 use tokio::process::Command;
-use tonic::{transport::Server, Request, Response, Status};
+use tonic::{Request, Response, Status};
 
 // The module `shell` is created by Tonic automatically because your
 // package in shell.proto is named `shell`. The name "shell" below must
@@ -8,7 +8,7 @@ pub mod shell {
     tonic::include_proto!("shell");
 }
 
-use shell::shell_executor_server::{ShellExecutor, ShellExecutorServer};
+use shell::shell_executor_server::ShellExecutor;
 use shell::{ShellRequest, ShellResponse};
 
 #[derive(Debug, Default)]

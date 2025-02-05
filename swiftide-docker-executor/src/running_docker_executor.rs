@@ -1,29 +1,22 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
-    container::{
-        Config, CreateContainerOptions, LogOutput, LogsOptions, RemoveContainerOptions,
-        StartContainerOptions, UploadToContainerOptions,
-    },
-    exec::{CreateExecOptions, StartExecResults},
-    image::{BuildImageOptions, CommitContainerOptions},
-    secret::{ContainerState, ContainerStateStatusEnum, PortBinding},
-    Docker,
+    container::RemoveContainerOptions,
+    secret::{ContainerState, ContainerStateStatusEnum},
 };
 use shell::shell_executor_client::ShellExecutorClient;
-use std::{collections::HashMap, io::Write, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{
     prelude::{StreamExt as _, TryStreamExt as _},
     Command, CommandError, CommandOutput,
 };
-use tracing::info;
 use uuid::Uuid;
 
 use crate::{
     client::Client, container_configurator::ContainerConfigurator,
     container_starter::ContainerStarter, dockerfile_manager::DockerfileManager,
-    dockerfile_mangler::mangle, image_builder::ImageBuilder, ContextBuilder, DockerExecutorError,
+    image_builder::ImageBuilder, ContextBuilder, DockerExecutorError,
 };
 
 pub mod shell {

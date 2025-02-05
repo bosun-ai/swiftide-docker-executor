@@ -1,11 +1,10 @@
-use std::{fs::read_to_string, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use bollard::image::BuildImageOptions;
 use swiftide_core::prelude::StreamExt as _;
-use tracing::info;
 
-use crate::{client::Client, DockerExecutorError, ImageBuildError};
+use crate::{client::Client, ImageBuildError};
 
 pub struct ImageBuilder {
     docker: Arc<Client>,

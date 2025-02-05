@@ -1,7 +1,6 @@
 /// Adds copy statements to the Dockerfile to copy the built binary into the image.
 use std::path::{Path, PathBuf};
 
-use thiserror::Error;
 use tokio::fs::read_to_string;
 
 use crate::MangleError;
@@ -145,7 +144,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mangle_with_multiple_froms_and_other_lines() {
+    async fn test_mangle_with_multiple_forms_and_other_lines() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("Dockerfile");
         let mut file = File::create(&file_path).unwrap();
