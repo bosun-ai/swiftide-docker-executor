@@ -1,7 +1,14 @@
 [package]
 name = "swiftide-docker-service"
-version = "0.1.0"
+version = "0.4.1"
+description = "The grpc client for the docker executor"
+license = "MIT"
+readme = "README.md"
+keywords = ["llm", "rag", "ai", "data", "openai"]
+homepage = "https://swiftide.rs"
+repository = "https://github.com/bosun-ai/swiftide-docker-executor"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
