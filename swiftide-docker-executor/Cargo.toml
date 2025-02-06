@@ -11,7 +11,7 @@ edition = "2021"
 build = "build.rs"
 
 [dependencies]
-swiftide-core = "0.17"
+swiftide-core = "0.18"
 tokio = { workspace = true }
 
 bollard = { version = "0.18", features = ["buildkit"] }
@@ -35,6 +35,6 @@ tonic-build = { workspace = true }
 
 
 [dev-dependencies]
-swiftide-agents = "0.17"
+swiftide-agents = "0.18"
 test-log = { version = "0.2", features = ["trace"] }
 insta = { version = "1.42.1", features = ["filters"] }
