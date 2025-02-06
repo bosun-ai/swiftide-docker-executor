@@ -17,7 +17,7 @@ pub async fn mangle(path: &Path) -> Result<MangledDockerfile, MangleError> {
         .await
         .map_err(MangleError::DockerfileReadError)?;
 
-    let image_name = format!("bosun-ai/swiftide-docker-service:{this_crate}");
+    let image_name = format!("bosunai/swiftide-docker-service:{this_crate}");
     // Remove existing CMD or ENTRYPOINT instructions
     content = content
         .lines()
@@ -89,7 +89,7 @@ mod tests {
         assert!(
             result
                 .content
-                .contains("COPY --from=bosun-ai/swiftide-docker-service:"),
+                .contains("COPY --from=bosunai/swiftide-docker-service:"),
             "action {}",
             result.content
         );
