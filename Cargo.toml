@@ -20,7 +20,7 @@ ignore = "0.4"
 walkdir = "2.5"
 tokio = { version = "1", default-features = false }
 tokio-tar = "0.3"
-uuid = { version = "1.12", features = ["v4"] }
+uuid = { version = "1.13", features = ["v4"] }
 tracing = "0.1"
 indoc = "2.0"
 anyhow = "1.0"
@@ -29,4 +29,4 @@ dirs = "6.0"
 [dev-dependencies]
 swiftide-agents = "0.18"
 test-log = { version = "0.2", features = ["trace"] }
-tempfile = "3.15"
+tempfile = "3.16"
