@@ -52,7 +52,7 @@ async fn test_context_present() {
         "Context did not contain `Cargo.toml`, actual:\n {ls}"
     );
 
-    // Veryify that the temporary dockerfile got removed
+    // Verify that the temporary dockerfile got removed
     assert_eq!(ls.output.lines().count(), local_ls.lines().count());
 }
 
