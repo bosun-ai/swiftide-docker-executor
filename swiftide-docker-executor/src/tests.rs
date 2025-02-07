@@ -44,10 +44,16 @@ async fn test_context_present() {
         .await
         .unwrap();
 
+    let local_ls = std::process::Command::new("ls").arg("-a").output().unwrap();
+    let local_ls = std::str::from_utf8(&local_ls.stdout).unwrap();
+
     assert!(
         ls.to_string().contains("Cargo.toml"),
         "Context did not contain `Cargo.toml`, actual:\n {ls}"
     );
+
+    // Veryify that the temporary dockerfile got removed
+    assert_eq!(ls.output.lines().count(), local_ls.lines().count());
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]

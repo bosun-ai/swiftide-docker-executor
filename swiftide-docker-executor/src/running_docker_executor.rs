@@ -96,11 +96,31 @@ impl RunningDockerExecutor {
             .start_container(image_name, &container_uuid, container_config)
             .await?;
 
-        Ok(RunningDockerExecutor {
+        // Remove the temporary dockerfile from the container
+
+        let executor = RunningDockerExecutor {
             container_id,
             docker,
             host_port,
-        })
+        };
+
+        // we only want the filename
+        let Some(tmp_dockerfile_path) = tmp_dockerfile
+            .path()
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+        else {
+            return Ok(executor);
+        };
+
+        drop(tmp_dockerfile); // Make sure the temporary file is removed right away
+        executor
+            .exec_shell(&format!("rm {}", tmp_dockerfile_path))
+            .await
+            .context("failed to remove temporary dockerfile")
+            .map_err(DockerExecutorError::Start)?;
+
+        Ok(executor)
     }
 
     /// Returns the underlying bollard status of the container
