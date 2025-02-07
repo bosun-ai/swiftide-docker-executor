@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{io::Write as _, path::Path, sync::Arc};
 
 use anyhow::Result;
 use bollard::image::BuildImageOptions;
@@ -23,6 +23,11 @@ impl ImageBuilder {
         image_name: &str,
         tag: &str,
     ) -> Result<String, ImageBuildError> {
+        let mut c = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        c.write_all(&context)
+            .map_err(ImageBuildError::Compression)?;
+        let compressed = c.finish().map_err(ImageBuildError::Compression)?;
+
         let image_name_with_tag = format!("{image_name}:{tag}");
 
         let relative_dockerfile = dockerfile
@@ -42,15 +47,26 @@ impl ImageBuilder {
             ..Default::default()
         };
 
-        let mut build_stream = self
-            .docker
-            .build_image(build_options, None, Some(context.into()));
+        let mut build_stream =
+            self.docker
+                .build_image(build_options, None, Some(compressed.into()));
 
         while let Some(log) = build_stream.next().await {
             match log {
                 Ok(output) => {
-                    if let Some(stream) = output.stream {
-                        tracing::debug!("Build log: {}", stream);
+                    if let Some(output) = output.stream {
+                        tracing::info!("{}", output);
+                    }
+
+                    if let Some(error) = output.error {
+                        let details = output
+                            .error_detail
+                            .and_then(|e| e.message)
+                            .unwrap_or_default();
+
+                        tracing::error!(details, "Build error: {error}");
+
+                        return Err(ImageBuildError::BuildError(format!("{error} {details}")));
                     }
                 }
                 Err(e) => {

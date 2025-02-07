@@ -68,10 +68,16 @@ pub enum MangleError {
 
 #[derive(Error, Debug)]
 pub enum ImageBuildError {
-    #[error("Build failed: {0}")]
+    #[error("error compressing context")]
+    Compression(std::io::Error),
+
+    #[error("build failed: {0}")]
     BuildFailed(String),
 
-    #[error("Invalid image name: {0}")]
+    #[error("build error: {0}")]
+    BuildError(String),
+
+    #[error("invalid image name: {0}")]
     InvalidImageName(String),
 }
 
