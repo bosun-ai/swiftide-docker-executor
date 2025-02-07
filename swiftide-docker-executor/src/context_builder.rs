@@ -106,8 +106,8 @@ impl ContextBuilder {
                 continue;
             };
 
-            if path.is_dir() {
-                tracing::debug!(path = ?path, "Adding directory to tar");
+            if path.is_dir() && !path.is_symlink() {
+                tracing::debug!(path = ?path, relative_path = ?relative_path, "Adding directory to tar");
                 if let Err(err) = tar.append_path(relative_path).await {
                     tracing::warn!(?err, "Failed to append path to tar");
                 }
