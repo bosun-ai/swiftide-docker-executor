@@ -1,26 +1,30 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
-use std::{path::Path, sync::Arc};
-pub use swiftide_core::ToolExecutor;
-use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput};
-use tracing::info;
-use uuid::Uuid;
-
 use bollard::{
-    container::{
-        Config, CreateContainerOptions, LogOutput, RemoveContainerOptions, StartContainerOptions,
-    },
-    exec::{CreateExecOptions, StartExecResults},
-    image::BuildImageOptions,
+    container::RemoveContainerOptions,
     secret::{ContainerState, ContainerStateStatusEnum},
 };
+use shell::shell_executor_client::ShellExecutorClient;
+use std::{path::Path, sync::Arc};
+pub use swiftide_core::ToolExecutor;
+use swiftide_core::{Command, CommandError, CommandOutput};
+use uuid::Uuid;
 
-use crate::{client::Client, ContextBuilder, DockerExecutorError};
+use crate::{
+    client::Client, container_configurator::ContainerConfigurator,
+    container_starter::ContainerStarter, dockerfile_manager::DockerfileManager,
+    image_builder::ImageBuilder, ContextBuilder, DockerExecutorError,
+};
+
+pub mod shell {
+    tonic::include_proto!("shell");
+}
 
 #[derive(Clone, Debug)]
 pub struct RunningDockerExecutor {
     pub container_id: String,
     pub(crate) docker: Arc<Client>,
+    pub host_port: String,
 }
 
 impl From<RunningDockerExecutor> for Arc<dyn ToolExecutor> {
@@ -52,12 +56,18 @@ impl RunningDockerExecutor {
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
         let docker = Client::lazy_client().await?;
 
+        // Prepare dockerfile
+        let dockerfile_manager = DockerfileManager::new(context_path);
+        let tmp_dockerfile = dockerfile_manager.prepare_dockerfile(dockerfile).await?;
+
+        // Build context
         tracing::warn!(
             "Creating archive for context from {}",
             context_path.display()
         );
         let context = ContextBuilder::from_path(context_path)?.build_tar().await?;
 
+        // Build image
         let tag = container_uuid
             .to_string()
             .split_once('-')
@@ -65,68 +75,52 @@ impl RunningDockerExecutor {
             .unwrap_or("latest")
             .to_string();
 
-        let image_name_with_tag = format!("{image_name}:{tag}");
-        let build_options = BuildImageOptions {
-            t: image_name_with_tag.as_str(),
-            rm: true,
-            dockerfile: &dockerfile.to_string_lossy(),
-            ..Default::default()
-        };
-
-        tracing::warn!("Building docker image with name {image_name}");
-        {
-            let mut build_stream = docker.build_image(build_options, None, Some(context.into()));
-
-            while let Some(log) = build_stream.next().await {
-                match log {
-                    Ok(output) => {
-                        if let Some(stream) = output.stream {
-                            info!("{}", stream);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Error building image: {e:#}");
-                        return Err(e.into());
-                    }
-                }
-            }
-        }
-
-        let socket_path = &docker.socket_path;
-        let config = Config {
-            image: Some(image_name_with_tag.as_str()),
-            cmd: Some(vec!["sleep", "infinity"]),
-            tty: Some(true),
-            entrypoint: Some(vec![""]),
-            host_config: Some(bollard::models::HostConfig {
-                auto_remove: Some(true),
-                binds: Some(vec![format!("{socket_path}:/var/run/docker.sock")]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        let container_name = format!("{image_name}-{container_uuid}");
-        let create_options = CreateContainerOptions {
-            name: container_name.as_str(),
-            ..Default::default()
-        };
-
-        tracing::warn!("Creating container from image {image_name}");
-        let container_id = docker
-            .create_container(Some(create_options), config)
-            .await?
-            .id;
-
-        tracing::warn!("Starting container {container_id}");
-        docker
-            .start_container(&container_id, None::<StartContainerOptions<String>>)
+        let image_builder = ImageBuilder::new(docker.clone());
+        let image_name_with_tag = image_builder
+            .build_image(
+                context_path,
+                context,
+                tmp_dockerfile.path(),
+                image_name,
+                &tag,
+            )
             .await?;
 
-        Ok(RunningDockerExecutor {
+        // Configure container
+        let container_config = ContainerConfigurator::new(docker.socket_path.clone())
+            .create_container_config(&image_name_with_tag);
+
+        // Start container
+        let container_starter = ContainerStarter::new(docker.clone());
+        let (container_id, host_port) = container_starter
+            .start_container(image_name, &container_uuid, container_config)
+            .await?;
+
+        // Remove the temporary dockerfile from the container
+
+        let executor = RunningDockerExecutor {
             container_id,
             docker,
-        })
+            host_port,
+        };
+
+        // we only want the filename
+        let Some(tmp_dockerfile_path) = tmp_dockerfile
+            .path()
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+        else {
+            return Ok(executor);
+        };
+
+        drop(tmp_dockerfile); // Make sure the temporary file is removed right away
+        executor
+            .exec_shell(&format!("rm {}", tmp_dockerfile_path))
+            .await
+            .context("failed to remove temporary dockerfile")
+            .map_err(DockerExecutorError::Start)?;
+
+        Ok(executor)
     }
 
     /// Returns the underlying bollard status of the container
@@ -154,58 +148,29 @@ impl RunningDockerExecutor {
     }
 
     async fn exec_shell(&self, cmd: &str) -> Result<CommandOutput, CommandError> {
-        let cmd = vec!["sh", "-c", cmd];
-        tracing::debug!("Executing command {cmd}", cmd = cmd.join(" "));
+        let mut client =
+            ShellExecutorClient::connect(format!("http://127.0.0.1:{}", self.host_port))
+                .await
+                .map_err(anyhow::Error::from)?;
 
-        let exec = self
-            .docker
-            .create_exec(
-                &self.container_id,
-                CreateExecOptions {
-                    attach_stdout: Some(true),
-                    attach_stderr: Some(true),
-                    cmd: Some(cmd),
-                    ..Default::default()
-                },
-            )
+        let request = tonic::Request::new(shell::ShellRequest {
+            command: cmd.to_string(),
+        });
+
+        let response = client
+            .exec_shell(request)
             .await
-            .context("Failed to create docker exec")?
-            .id;
+            .map_err(anyhow::Error::from)?;
 
-        let mut stdout = String::new();
-        let mut stderr = String::new();
+        let shell::ShellResponse {
+            stdout,
+            stderr,
+            exit_code,
+        } = response.into_inner();
 
-        if let StartExecResults::Attached { mut output, .. } = self
-            .docker
-            .start_exec(&exec, None)
-            .await
-            .context("Failed to start docker exec")?
-        {
-            while let Some(Ok(msg)) = output.next().await {
-                match msg {
-                    LogOutput::StdErr { .. } => stderr.push_str(&msg.to_string()),
-                    LogOutput::StdOut { .. } => stdout.push_str(&msg.to_string()),
-                    _ => {
-                        stderr
-                            .push_str("Command appears to wait for input, which is not supported");
-                        break;
-                    }
-                }
-            }
-        } else {
-            todo!();
-        }
-
-        let exec_inspect = self
-            .docker
-            .inspect_exec(&exec)
-            .await
-            .context("Failed to inspect docker exec result")?;
-        let exit_code = exec_inspect.exit_code.unwrap_or(0);
-
-        // Trim both stdout and stderr to remove surrounding whitespace and newlines
+        // // Trim both stdout and stderr to remove surrounding whitespace and newlines
         let output = stdout.trim().to_string() + stderr.trim();
-
+        //
         if exit_code == 0 {
             Ok(output.into())
         } else {

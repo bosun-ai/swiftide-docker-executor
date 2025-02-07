@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package shell;
+
+// The gRPC service definition.
+service ShellExecutor {
+  // Runs a shell command and returns exit code, stdout, and stderr.
+  rpc ExecShell (ShellRequest) returns (ShellResponse) {}
+}
+
+// The request message containing the command to run.
+message ShellRequest {
+  string command = 1;
+}
+
+// The response message containing exit code, stdout, and stderr.
+message ShellResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+}
+

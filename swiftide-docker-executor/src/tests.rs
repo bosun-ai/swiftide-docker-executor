@@ -19,6 +19,8 @@ async fn test_runs_docker_and_echos() {
         .await
         .unwrap();
 
+    assert!(executor.is_running().await, "Container should be running");
+
     let output = executor
         .exec_cmd(&Command::Shell("echo hello".to_string()))
         .await
@@ -31,7 +33,6 @@ async fn test_runs_docker_and_echos() {
 async fn test_context_present() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE)
-        .with_context_path(".")
         .with_image_name("tests")
         .to_owned()
         .start()
@@ -43,8 +44,16 @@ async fn test_context_present() {
         .await
         .unwrap();
 
-    assert!(ls.to_string().contains("Cargo.toml"));
-    assert!(ls.to_string().contains(".git"));
+    let local_ls = std::process::Command::new("ls").arg("-a").output().unwrap();
+    let local_ls = std::str::from_utf8(&local_ls.stdout).unwrap();
+
+    assert!(
+        ls.to_string().contains("Cargo.toml"),
+        "Context did not contain `Cargo.toml`, actual:\n {ls}"
+    );
+
+    // Verify that the temporary dockerfile got removed
+    assert_eq!(ls.output.lines().count(), local_ls.lines().count());
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -70,18 +79,54 @@ async fn test_overrides_include_git_respects_ignore() {
         .output()
         .unwrap();
 
+    let user_email = std::process::Command::new("git")
+        .arg("config")
+        .arg("user.email")
+        .arg("\"kwaak@bosun.ai\"")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
+    assert!(user_email.status.success(), "failed to set git user email");
+
+    let user_name = std::process::Command::new("git")
+        .arg("config")
+        .arg("user.name")
+        .arg("\"kwaak\"")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
+    assert!(user_name.status.success(), "failed to set git user name");
+    // Make an initial commit
+    std::process::Command::new("git")
+        .arg("add")
+        .arg(".")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
+    std::process::Command::new("git")
+        .arg("commit")
+        .arg("-m")
+        .arg("Initial commit")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
     let local_ls = std::process::Command::new("ls")
-        .arg("-a")
+        .arg("-aRl")
         .current_dir(context_path.path())
         .output()
         .unwrap();
 
     let output = std::str::from_utf8(&local_ls.stdout).unwrap();
-    dbg!(&output);
+    eprintln!("Local LS:\n {output}");
     assert!(output.contains(".git"));
 
     let executor = DockerExecutor::default()
         .with_context_path(context_path.path())
+        .with_dockerfile("Dockerfile")
         .with_image_name("tests-git")
         .to_owned()
         .start()
@@ -93,8 +138,9 @@ async fn test_overrides_include_git_respects_ignore() {
         .await
         .unwrap();
 
-    eprintln!("{ls}");
+    eprintln!("Executor LS:\n {ls}");
     assert!(ls.to_string().contains(".git"));
+    assert!(!ls.to_string().contains("README.md"));
     assert!(!ls.to_string().contains("target"));
     assert!(!ls.to_string().contains("ignored_file"));
 
@@ -114,7 +160,8 @@ async fn test_overrides_include_git_respects_ignore() {
 
     eprintln!("{git_status}");
 
-    assert!(git_status.to_string().contains("No commits yet"));
+    // It's ignored so git will think it's deleted
+    assert!(git_status.to_string().contains("deleted:    ignored_file"));
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -267,13 +314,12 @@ async fn test_custom_dockerfile() {
     let context_path = tempfile::tempdir().unwrap();
 
     std::process::Command::new("cp")
-        .arg("Dockerfile")
+        .arg("Dockerfile.tests")
         .arg(context_path.path().join("Dockerfile.custom"))
         .output()
         .unwrap();
 
     let executor = DockerExecutor::default()
-        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(context_path.path())
         .with_image_name("test-custom")
         .with_dockerfile("Dockerfile.custom")
@@ -293,7 +339,7 @@ async fn test_custom_dockerfile() {
 async fn test_nullifies_cmd() {
     let context_path = tempfile::tempdir().unwrap();
 
-    let mut dockerfile_content = std::fs::read_to_string("Dockerfile").unwrap();
+    let mut dockerfile_content = std::fs::read_to_string("Dockerfile.tests").unwrap();
 
     // Add a cmd that will exit right away
     dockerfile_content.push('\n');
@@ -303,7 +349,7 @@ async fn test_nullifies_cmd() {
     std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
 
     let executor = DockerExecutor::default()
-        .with_dockerfile(TEST_DOCKERFILE)
+        .with_dockerfile("Dockerfile")
         .with_context_path(context_path.path())
         .with_image_name("test-null-cmd")
         .with_dockerfile("Dockerfile")
@@ -323,7 +369,7 @@ async fn test_nullifies_cmd() {
 async fn test_nullifies_entrypoint() {
     let context_path = tempfile::tempdir().unwrap();
 
-    let mut dockerfile_content = std::fs::read_to_string("Dockerfile").unwrap();
+    let mut dockerfile_content = std::fs::read_to_string("Dockerfile.tests").unwrap();
 
     // Add a cmd that will exit right away
     dockerfile_content.push('\n');
@@ -333,7 +379,7 @@ async fn test_nullifies_entrypoint() {
     std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
 
     let executor = DockerExecutor::default()
-        .with_dockerfile(TEST_DOCKERFILE)
+        .with_dockerfile("Dockerfile")
         .with_context_path(context_path.path())
         .with_image_name("test-null-entrypoint")
         .with_dockerfile("Dockerfile")
@@ -369,7 +415,7 @@ async fn test_container_state() {
 async fn test_invalid_dockerfile() {
     let context_path = tempfile::tempdir().unwrap();
 
-    let mut dockerfile_content = std::fs::read_to_string("Dockerfile").unwrap();
+    let mut dockerfile_content = std::fs::read_to_string("Dockerfile.tests").unwrap();
 
     // Add a cmd that will exit right away
     dockerfile_content.push('\n');
@@ -379,7 +425,6 @@ async fn test_invalid_dockerfile() {
     std::fs::write(context_path.path().join("Dockerfile"), dockerfile_content).unwrap();
 
     let err = DockerExecutor::default()
-        .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(context_path.path())
         .with_image_name("test-invalid")
         .with_dockerfile("Dockerfile")
@@ -388,8 +433,8 @@ async fn test_invalid_dockerfile() {
         .await
         .unwrap_err();
 
-    let DockerExecutorError::Bollard(err) = err else {
-        panic!("Expected Bollard error")
+    let DockerExecutorError::ImageBuild(err) = err else {
+        panic!("{:#}", err);
     };
 
     assert!(err.to_string().contains("unknown instruction: SHOULD"));
