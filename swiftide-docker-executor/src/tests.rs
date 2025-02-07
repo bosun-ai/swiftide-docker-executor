@@ -79,6 +79,25 @@ async fn test_overrides_include_git_respects_ignore() {
         .output()
         .unwrap();
 
+    let user_email = std::process::Command::new("git")
+        .arg("config")
+        .arg("user.email")
+        .arg("\"kwaak@bosun.ai\"")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
+    assert!(user_email.status.success(), "failed to set git user email");
+
+    let user_name = std::process::Command::new("git")
+        .arg("config")
+        .arg("user.name")
+        .arg("\"kwaak\"")
+        .current_dir(context_path.path())
+        .output()
+        .unwrap();
+
+    assert!(user_name.status.success(), "failed to set git user name");
     // Make an initial commit
     std::process::Command::new("git")
         .arg("add")
@@ -119,7 +138,7 @@ async fn test_overrides_include_git_respects_ignore() {
         .await
         .unwrap();
 
-    eprintln!("{ls}");
+    eprintln!("Executor LS:\n {ls}");
     assert!(ls.to_string().contains(".git"));
     assert!(!ls.to_string().contains("README.md"));
     assert!(!ls.to_string().contains("target"));
