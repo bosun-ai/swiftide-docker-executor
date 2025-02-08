@@ -1957,6 +1957,7 @@ dependencies = [
  "ignore",
  "indoc",
  "insta",
+ "pretty_assertions",
  "prost",
  "swiftide-agents",
  "swiftide-core",

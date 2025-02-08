@@ -7,3 +7,15 @@ tonic = { version = "0.12" }
 prost = "0.13"
 tonic-build = "0.12"
 tokio = { version = "1", features = ["full"] }
+
+[workspace.package]
+description = "A docker executor for swiftide agent tools"
+license = "MIT"
+readme = "README.md"
+keywords = ["llm", "rag", "ai", "data", "openai"]
+homepage = "https://github.com/bosun-ai/swiftide"
+repository = "https://github.com/bosun-ai/swiftide-docker-executor"
+edition = "2021"
+build = "build.rs"
+version = "0.4.2"
+categories = ["asynchronous"]

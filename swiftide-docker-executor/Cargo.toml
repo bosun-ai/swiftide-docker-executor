@@ -1,14 +1,15 @@
 [package]
 name = "swiftide-docker-executor"
-version = "0.4.2"
-description = "A docker executor for swiftide agent tools"
-license = "MIT"
-readme = "README.md"
-keywords = ["llm", "rag", "ai", "data", "openai"]
-homepage = "https://swiftide.rs"
-repository = "https://github.com/bosun-ai/swiftide-docker-executor"
-edition = "2021"
 build = "build.rs"
+repository.workspace = true
+edition.workspace = true
+homepage.workspace = true
+version.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+description.workspace = true
+categories.workspace = true
 
 [dependencies]
 swiftide-core = "0.18"
@@ -40,3 +41,4 @@ tonic-build = { workspace = true }
 swiftide-agents = "0.18"
 test-log = { version = "0.2", features = ["trace"] }
 insta = { version = "1.42.1", features = ["filters"] }
+pretty_assertions = "1.4"
