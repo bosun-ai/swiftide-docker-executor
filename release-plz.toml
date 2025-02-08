@@ -1,3 +1,4 @@
 [workspace]
 git_tag_enable = true
 changelog_config = "cliff.toml"
+changelog_path = "./CHANGELOG.md"
