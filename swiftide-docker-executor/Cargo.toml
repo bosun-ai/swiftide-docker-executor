@@ -1,6 +1,7 @@
 [package]
 name = "swiftide-docker-executor"
 build = "build.rs"
+include = ["proto", "src/**", "Cargo.toml", "build.rs"]
 repository.workspace = true
 edition.workspace = true
 homepage.workspace = true
