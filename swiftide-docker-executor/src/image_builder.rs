@@ -51,10 +51,12 @@ impl ImageBuilder {
             self.docker
                 .build_image(build_options, None, Some(compressed.into()));
 
+        let mut logs = Vec::new();
         while let Some(log) = build_stream.next().await {
             match log {
                 Ok(output) => {
                     if let Some(output) = output.stream {
+                        logs.push(output.clone());
                         tracing::info!("{}", output);
                     }
 
@@ -70,6 +72,11 @@ impl ImageBuilder {
                     }
                 }
                 Err(e) => {
+                    if let bollard::errors::Error::DockerStreamError { error } = e {
+                        return Err(ImageBuildError::BuildFailed(format!(
+                            "error during build: {error}"
+                        )));
+                    }
                     return Err(ImageBuildError::BuildFailed(e.to_string()));
                 }
             }
