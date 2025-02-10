@@ -65,13 +65,19 @@ impl ContainerStarter {
         {
             tokio::time::sleep(Duration::from_millis(100)).await;
 
-            if let Ok(log) = log {
-                if log.to_string().contains("listening on") {
-                    break;
-                }
+            let log = log
+                .map_err(|e| ContainerStartError::Logs(e.to_string()))?
+                .to_string();
+
+            tracing::debug!("Container: {}", &log);
+
+            if log.contains("listening on") {
+                tracing::info!("Container started");
+                break;
             }
 
             if count > 100 {
+                tracing::warn!("Waited 10 seconds for container to start; assuming it did");
                 break;
             }
             count += 1;

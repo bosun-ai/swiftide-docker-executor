@@ -103,6 +103,9 @@ pub enum ContainerStartError {
 
     #[error("Failed to get container port: {0}")]
     PortMapping(String),
+
+    #[error("Error from logs: {0}")]
+    Logs(String),
 }
 impl From<Infallible> for DockerExecutorError {
     fn from(_: Infallible) -> Self {
