@@ -63,11 +63,22 @@ impl ContainerStarter {
             .next()
             .await
         {
+            if count > 10 {
+                tracing::warn!("Waited 10 seconds for container to start; assuming it did");
+                break;
+            }
+
             tokio::time::sleep(Duration::from_millis(100)).await;
 
-            let log = log
-                .map_err(|e| ContainerStartError::Logs(e.to_string()))?
-                .to_string();
+            let Ok(log) = log
+                .as_ref()
+                .map_err(|e| ContainerStartError::Logs(e.to_string()))
+            else {
+                tracing::warn!("Failed to get logs: {:?}", log);
+                count += 1;
+                continue;
+            };
+            let log = log.to_string();
 
             tracing::debug!("Container: {}", &log);
 
@@ -76,10 +87,6 @@ impl ContainerStarter {
                 break;
             }
 
-            if count > 100 {
-                tracing::warn!("Waited 10 seconds for container to start; assuming it did");
-                break;
-            }
             count += 1;
         }
         Ok(())
