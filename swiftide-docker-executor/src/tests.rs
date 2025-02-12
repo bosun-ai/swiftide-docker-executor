@@ -433,3 +433,47 @@ async fn test_invalid_dockerfile() {
 
     assert!(err.to_string().contains("unknown instruction: SHOULD"));
 }
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_regression_complicated_dockerfile() {
+    let dockerfile = r"
+ARG RUST_VERSION=1.83-slim
+FROM rust:${RUST_VERSION} as builder
+
+RUN rustup component add clippy rustfmt
+
+# Install tool dependencies for app and git/ssh for the workspace
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  ripgrep fd-find git ssh curl  \
+  protobuf-compiler \
+  libprotobuf-dev \
+  pkg-config libssl-dev iputils-ping \
+  make \
+
+  # Needed for copypasta (internal for kwaak)
+  libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+  && rm -rf /var/lib/apt/lists/* \
+  && cp /usr/bin/fdfind /usr/bin/fd
+
+RUN cargo install cargo-llvm-cov cargo-nextest
+
+COPY . /app
+
+WORKDIR /app
+    ";
+
+    let context_path = tempfile::tempdir().unwrap();
+
+    std::fs::write(context_path.path().join("Dockerfile"), dockerfile).unwrap();
+
+    let executor = DockerExecutor::default()
+        .with_dockerfile("Dockerfile")
+        .with_context_path(context_path.path())
+        .with_image_name("test-complicated")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    assert!(executor.is_running().await);
+}
