@@ -13,7 +13,7 @@ pub enum DockerExecutorError {
     #[error("container state missing for: {0}")]
     ContainerStateMissing(String),
 
-    #[error("error initializing client: {0}")]
+    #[error(transparent)]
     Init(#[from] ClientError),
 
     #[error("error with io {0}")]
@@ -52,7 +52,7 @@ pub enum ContextError {
 
 #[derive(Error, Debug)]
 pub enum ClientError {
-    #[error("failed to initialize client: {0}")]
+    #[error("failed to connect to docker: {0}")]
     Init(bollard::errors::Error),
 }
 
