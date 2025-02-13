@@ -4,25 +4,25 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum DockerExecutorError {
-    #[error("error from bollard")]
+    #[error("error from bollard: {0}")]
     Docker(#[from] bollard::errors::Error),
 
-    #[error("error building context for image")]
+    #[error("error building context for image: {0}")]
     Context(#[from] ContextError),
 
-    #[error("container state missing for {0}")]
+    #[error("container state missing for: {0}")]
     ContainerStateMissing(String),
 
-    #[error("error initializing client")]
+    #[error("error initializing client: {0}")]
     Init(#[from] ClientError),
 
     #[error("error with io {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("error transforming dockerfile")]
+    #[error("error transforming dockerfile: {0}")]
     Transform(#[from] MangleError),
 
-    #[error("error starting container")]
+    #[error("error starting container: {0}")]
     Start(anyhow::Error),
 
     #[error("Failed to build image: {0}")]
@@ -52,7 +52,7 @@ pub enum ContextError {
 
 #[derive(Error, Debug)]
 pub enum ClientError {
-    #[error("failed to initialize client")]
+    #[error("failed to initialize client: {0}")]
     Init(bollard::errors::Error),
 }
 
@@ -68,7 +68,7 @@ pub enum MangleError {
 
 #[derive(Error, Debug)]
 pub enum ImageBuildError {
-    #[error("error compressing context")]
+    #[error("error compressing context: {0}")]
     Compression(std::io::Error),
 
     #[error("build failed: {0}")]
