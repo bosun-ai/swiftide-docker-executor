@@ -13,7 +13,7 @@ description.workspace = true
 categories.workspace = true
 
 [dependencies]
-swiftide-core = "0.19"
+swiftide-core = "0.20"
 
 bollard = { version = "0.18" }
 thiserror = "2.0"
