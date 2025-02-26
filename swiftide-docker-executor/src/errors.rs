@@ -37,16 +37,16 @@ pub enum DockerExecutorError {
 
 #[derive(Error, Debug)]
 pub enum ContextError {
-    #[error("error while trying to ignore files")]
+    #[error("error while trying to ignore files: {0}")]
     FailedIgnore(#[from] ignore::Error),
 
-    #[error("failed while walking files in context")]
+    #[error("failed while walking files in context: {0}")]
     Walk(#[from] walkdir::Error),
 
-    #[error("error reading file")]
+    #[error(transparent)]
     Io(#[from] std::io::Error),
 
-    #[error("failed to convert to relative path")]
+    #[error("failed to convert to relative path{0}")]
     RelativePath(#[from] StripPrefixError),
 }
 
