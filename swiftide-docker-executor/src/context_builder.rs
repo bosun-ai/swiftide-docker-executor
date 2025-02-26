@@ -133,7 +133,7 @@ impl ContextBuilder {
                 // Indicate it's a symlink
                 header.set_entry_type(EntryType::Symlink);
                 // The tar specification requires setting the link name for a symlink
-                if let Err(error) = header.set_link_name(link_target) {
+                if let Err(error) = header.set_link_name(&link_target) {
                     tracing::warn!(?error, "Failed to set link name on {link_target:#?}");
                     continue;
                 }

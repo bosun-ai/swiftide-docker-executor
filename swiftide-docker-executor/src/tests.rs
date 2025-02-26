@@ -455,7 +455,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/* \
   && cp /usr/bin/fdfind /usr/bin/fd
 
-RUN cargo install cargo-llvm-cov cargo-nextest
 
 COPY . /app
 
