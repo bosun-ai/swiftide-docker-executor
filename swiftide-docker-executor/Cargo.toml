@@ -30,6 +30,7 @@ tempfile = "3.15"
 http-body-util = "0.1.2"
 flate2 = "1.0"
 tokio.workspace = true
+fs-err = { version = "3.1.0", features = ["tokio"] }
 
 tonic.workspace = true
 prost.workspace = true

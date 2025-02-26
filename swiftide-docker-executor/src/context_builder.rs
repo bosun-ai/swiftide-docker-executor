@@ -133,7 +133,10 @@ impl ContextBuilder {
                 // Indicate it's a symlink
                 header.set_entry_type(EntryType::Symlink);
                 // The tar specification requires setting the link name for a symlink
-                header.set_link_name(link_target)?;
+                if let Err(error) = header.set_link_name(link_target) {
+                    tracing::warn!(?error, "Failed to set link name on {link_target:#?}");
+                    continue;
+                }
 
                 // Set ownership, permissions, etc.
                 header.set_uid(metadata.uid() as u64);
@@ -146,13 +149,18 @@ impl ContextBuilder {
                 // Symlinks don’t store file data in the tar, so size is 0
                 header.set_size(0);
 
-                tar.append_data(&mut header, path, tokio::io::empty())
-                    .await?;
+                if let Err(error) = tar.append_data(&mut header, path, tokio::io::empty()).await {
+                    tracing::warn!(
+                        ?error,
+                        "Failed to append symlink to tar on {link_target:#?}"
+                    );
+                    continue;
+                }
                 continue;
             }
 
             tracing::debug!(path = ?path, "Adding file to tar");
-            let mut file = tokio::fs::File::open(path).await?;
+            let mut file = fs_err::tokio::File::open(path).await?;
             let mut buffer_content = Vec::new();
             file.read_to_end(&mut buffer_content).await?;
 
