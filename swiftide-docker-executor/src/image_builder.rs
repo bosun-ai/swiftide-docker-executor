@@ -1,7 +1,7 @@
 use std::{io::Write as _, path::Path, sync::Arc};
 
 use anyhow::Result;
-use bollard::image::BuildImageOptions;
+use bollard::{image::BuildImageOptions, secret::BuildInfoAux};
 use swiftide_core::prelude::StreamExt as _;
 
 use crate::{client::Client, ImageBuildError};
@@ -44,6 +44,7 @@ impl ImageBuilder {
             t: image_name_with_tag.as_str(),
             rm: true,
             dockerfile: &relative_dockerfile.to_string_lossy(),
+            session: Some(image_name_with_tag.to_string()),
             ..Default::default()
         };
 
@@ -58,6 +59,12 @@ impl ImageBuilder {
                     if let Some(output) = output.stream {
                         logs.push(output.clone());
                         tracing::info!("{}", output);
+                    }
+
+                    // TODO: Verify to_string() is good enough
+                    if let Some(BuildInfoAux::BuildKit(inner)) = output.aux {
+                        logs.push(inner.to_string());
+                        tracing::info!("{}", inner);
                     }
 
                     if let Some(error) = output.error {
