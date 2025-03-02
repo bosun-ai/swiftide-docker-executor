@@ -94,6 +94,7 @@ impl ShellExecutor for MyShellExecutor {
         debug_assert!(stdout.is_empty());
         debug_assert!(stderr.is_empty());
 
+
         // Prepare response
         let response = ShellResponse {
             exit_code: output.status.code().unwrap_or(-1),
