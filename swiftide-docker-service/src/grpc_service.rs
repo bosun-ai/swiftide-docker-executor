@@ -26,7 +26,6 @@ impl ShellExecutor for MyShellExecutor {
         let output = Command::new("sh")
             .arg("-c")
             .arg(command)
-            .current_dir("/app")
             .output()
             .await
             .map_err(|e| Status::internal(format!("Failed to run command: {:?}", e)))?;
