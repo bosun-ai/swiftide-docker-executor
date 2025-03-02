@@ -1,10 +1,7 @@
 use std::{io::Write as _, path::Path, sync::Arc};
 
 use anyhow::Result;
-use bollard::{
-    image::BuildImageOptions,
-    secret::{BuildInfo, BuildInfoAux},
-};
+use bollard::{image::BuildImageOptions, secret::BuildInfoAux};
 use swiftide_core::prelude::StreamExt as _;
 
 use crate::{client::Client, ImageBuildError};
