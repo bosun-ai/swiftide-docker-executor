@@ -356,6 +356,7 @@ async fn test_nullifies_cmd() {
         .exec_cmd(&Command::shell("echo hello"))
         .await
         .unwrap();
+    dbg!(executor.logs().await.unwrap());
     assert_eq!(output.to_string(), "hello");
 }
 
@@ -432,6 +433,31 @@ async fn test_invalid_dockerfile() {
     };
 
     assert!(err.to_string().contains("unknown instruction: SHOULD"));
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_docker_logs_in_stdout() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-logs")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    executor
+        .exec_cmd(&Command::Shell("echo hello".to_string()))
+        .await
+        .unwrap();
+
+    let logs = executor.logs().await.unwrap();
+
+    let expected = "stdout: hello";
+    assert!(
+        logs.iter().any(|l| l.contains(expected)),
+        "Logs:\n {logs:?}"
+    );
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]

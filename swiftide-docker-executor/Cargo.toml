@@ -22,7 +22,7 @@ ignore = "0.4"
 walkdir = "2.5"
 tokio-tar = "0.3"
 uuid = { version = "1.12", features = ["v4"] }
-tracing = "0.1"
+tracing.workspace = true
 indoc = "2.0"
 anyhow = "1.0"
 dirs = "6.0"
