@@ -16,6 +16,8 @@ categories.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tonic.workspace = true
 prost.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3" }
 
 [build-dependencies]
 tonic-build = { workspace = true }

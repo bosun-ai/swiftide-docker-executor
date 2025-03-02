@@ -1,13 +1,16 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
-    container::RemoveContainerOptions,
+    container::{LogOutput, RemoveContainerOptions},
     secret::{ContainerState, ContainerStateStatusEnum},
 };
 use shell::shell_executor_client::ShellExecutorClient;
 use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
-use swiftide_core::{Command, CommandError, CommandOutput};
+use swiftide_core::{
+    prelude::{StreamExt as _, TryStreamExt},
+    Command, CommandError, CommandOutput,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -145,6 +148,37 @@ impl RunningDockerExecutor {
             .await
             .map(|state| state.status == Some(ContainerStateStatusEnum::RUNNING))
             .unwrap_or(false)
+    }
+
+    /// Returns the logs of the container
+    pub async fn logs(&self) -> Result<Vec<String>, DockerExecutorError> {
+        let mut logs = Vec::new();
+        let mut stream = self.docker.logs(
+            &self.container_id,
+            Some(bollard::container::LogsOptions {
+                follow: false,
+                stdout: true,
+                stderr: true,
+                tail: "all",
+                ..Default::default()
+            }),
+        );
+
+        while let Some(log_result) = stream.next().await {
+            match log_result {
+                Ok(log_output) => match log_output {
+                    LogOutput::Console { message }
+                    | LogOutput::StdOut { message }
+                    | LogOutput::StdErr { message } => {
+                        logs.push(String::from_utf8_lossy(&message).trim().to_string());
+                    }
+                    _ => {}
+                },
+                Err(e) => tracing::error!("Error retrieving logs: {e}"), // Error handling
+            }
+        }
+
+        Ok(logs)
     }
 
     async fn exec_shell(&self, cmd: &str) -> Result<CommandOutput, CommandError> {
