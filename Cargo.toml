@@ -18,5 +18,5 @@ homepage = "https://github.com/bosun-ai/swiftide"
 repository = "https://github.com/bosun-ai/swiftide-docker-executor"
 edition = "2021"
 build = "build.rs"
-version = "0.6.6"
+version = "0.6.7"
 categories = ["asynchronous"]
