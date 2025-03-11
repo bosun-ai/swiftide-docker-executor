@@ -44,6 +44,7 @@ impl ImageBuilder {
             t: image_name_with_tag.as_str(),
             rm: true,
             dockerfile: &relative_dockerfile.to_string_lossy(),
+            version: bollard::image::BuilderVersion::BuilderBuildKit,
             session: Some(image_name_with_tag.to_string()),
             ..Default::default()
         };
@@ -52,19 +53,20 @@ impl ImageBuilder {
             self.docker
                 .build_image(build_options, None, Some(compressed.into()));
 
-        let mut logs = Vec::new();
         while let Some(log) = build_stream.next().await {
             match log {
                 Ok(output) => {
                     if let Some(output) = output.stream {
-                        logs.push(output.clone());
                         tracing::info!("{}", output);
                     }
 
                     // TODO: Verify to_string() is good enough
                     if let Some(BuildInfoAux::BuildKit(inner)) = output.aux {
-                        logs.push(inner.to_string());
-                        tracing::info!("{}", inner);
+                        inner
+                            .vertexes
+                            .iter()
+                            .take(1)
+                            .for_each(|log| tracing::info!("{}", log.name))
                     }
 
                     if let Some(error) = output.error {
