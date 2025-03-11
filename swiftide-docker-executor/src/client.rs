@@ -18,19 +18,19 @@ const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
 
 #[derive(Debug)]
 pub struct Client {
-    bollar_client: bollard::Docker,
+    bollard_client: bollard::Docker,
     pub socket_path: String,
 }
 
 impl Client {
     fn new() -> Result<Self, ClientError> {
         let socket_path = get_socket_path();
-        let bollar_client =
+        let bollard_client =
             bollard::Docker::connect_with_socket(&socket_path, 120, bollard::API_DEFAULT_VERSION)
                 .map_err(ClientError::Init)?;
 
         Ok(Self {
-            bollar_client,
+            bollard_client,
             socket_path,
         })
     }
@@ -57,7 +57,7 @@ impl Deref for Client {
     type Target = bollard::Docker;
 
     fn deref(&self) -> &Self::Target {
-        &self.bollar_client
+        &self.bollard_client
     }
 }
 

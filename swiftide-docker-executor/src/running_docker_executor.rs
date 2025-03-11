@@ -67,6 +67,8 @@ impl RunningDockerExecutor {
         );
         let context = ContextBuilder::from_path(context_path)?.build_tar().await?;
 
+        tracing::debug!("Context build with size: {} bytes", context.len());
+
         // Build image
         let tag = container_uuid
             .to_string()
