@@ -45,10 +45,6 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
       - uses: taiki-e/install-action@just
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
@@ -56,4 +52,4 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: just docker-build-service
       - name: "Test"
-        run: cargo nextest run -j 2
+        run: cargo test --no-fail-fast
