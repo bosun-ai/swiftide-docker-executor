@@ -246,6 +246,8 @@ async fn test_assert_container_stopped_on_drop() {
 
     drop(executor);
 
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
     // assert it stopped
     let container = match docker.inspect_container(&container_id, None).await {
         // If it's gone already we're good

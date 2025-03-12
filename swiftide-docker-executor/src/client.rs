@@ -26,7 +26,7 @@ impl Client {
     fn new() -> Result<Self, ClientError> {
         let socket_path = get_socket_path();
         let bollard_client =
-            bollard::Docker::connect_with_socket(&socket_path, 120, bollard::API_DEFAULT_VERSION)
+            bollard::Docker::connect_with_socket(&socket_path, 600, bollard::API_DEFAULT_VERSION)
                 .map_err(ClientError::Init)?;
 
         Ok(Self {

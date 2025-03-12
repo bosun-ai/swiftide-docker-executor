@@ -1,5 +1,5 @@
 # A lightweight image used for tests
-FROM ubuntu:latest
+FROM ubuntu:noble
 
 # Just install git
 RUN apt-get update && apt-get install -y --no-install-recommends \
