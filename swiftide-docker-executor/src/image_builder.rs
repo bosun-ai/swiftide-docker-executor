@@ -42,8 +42,8 @@ impl ImageBuilder {
 
         let build_options = BuildImageOptions {
             t: image_name_with_tag.as_str(),
-            rm: false,   // Keep as much cache around as we can
-            pull: false, // Prefer local images
+            rm: false, // Keep as much cache around as we can
+            pull: true,
             dockerfile: &relative_dockerfile.to_string_lossy(),
             version: bollard::image::BuilderVersion::BuilderBuildKit,
             session: Some(image_name_with_tag.to_string()),
