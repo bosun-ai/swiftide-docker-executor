@@ -2185,7 +2185,7 @@ dependencies = [
 
 [[package]]
 name = "swiftide-docker-executor"
-version = "0.6.7"
+version = "0.6.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "swiftide-docker-service"
-version = "0.6.7"
+version = "0.6.8"
 dependencies = [
  "prost",
  "tokio",
