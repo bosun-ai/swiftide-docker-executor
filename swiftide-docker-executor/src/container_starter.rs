@@ -63,7 +63,7 @@ impl ContainerStarter {
             .next()
             .await
         {
-            if count > 10 {
+            if count > 100 {
                 tracing::warn!("Waited 10 seconds for container to start; assuming it did");
                 break;
             }
