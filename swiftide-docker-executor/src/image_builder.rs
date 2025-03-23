@@ -1,7 +1,7 @@
-use std::{io::Write as _, path::Path, sync::Arc};
+use std::{collections::HashMap, io::Write as _, path::Path, sync::Arc};
 
 use anyhow::Result;
-use bollard::{image::BuildImageOptions, secret::BuildInfoAux};
+use bollard::{auth::DockerCredentials, image::BuildImageOptions, secret::BuildInfoAux};
 use swiftide_core::prelude::StreamExt as _;
 
 use crate::{client::Client, ImageBuildError};
@@ -40,6 +40,21 @@ impl ImageBuilder {
             .map_err(|e| ImageBuildError::InvalidImageName(e.to_string()))?
             .to_path_buf();
 
+        let credentials = if std::env::var("CI").ok().is_some() {
+            let creds = DockerCredentials {
+                username: std::env::var("DOCKER_USERNAME").ok(),
+                password: std::env::var("DOCKER_PASSWORD").ok(),
+                ..Default::default()
+            };
+
+            let mut hashmap = HashMap::new();
+            hashmap.insert("docker.io".to_string(), creds);
+
+            Some(hashmap)
+        } else {
+            None
+        };
+
         let build_options = BuildImageOptions {
             t: image_name_with_tag.as_str(),
             rm: true,
@@ -51,7 +66,7 @@ impl ImageBuilder {
 
         let mut build_stream =
             self.docker
-                .build_image(build_options, None, Some(compressed.into()));
+                .build_image(build_options, credentials, Some(compressed.into()));
 
         while let Some(log) = build_stream.next().await {
             match log {
