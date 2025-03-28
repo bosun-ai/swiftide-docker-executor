@@ -34,7 +34,7 @@ pub async fn mangle(path: &Path) -> Result<MangledDockerfile, MangleError> {
         .iter()
         .enumerate()
         .filter(|(_, line)| line.trim_start().to_lowercase().starts_with("from"))
-        .last()
+        .next_back()
         .map(|(idx, _)| idx)
         .ok_or(MangleError::InvalidDockerfile)?
         + 1;

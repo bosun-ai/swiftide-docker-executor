@@ -1,7 +1,7 @@
-use std::{collections::HashMap, io::Write as _, path::Path, sync::Arc};
+use std::{io::Write as _, sync::Arc};
 
 use anyhow::Result;
-use bollard::{auth::DockerCredentials, image::BuildImageOptions, secret::BuildInfoAux};
+use bollard::{image::BuildImageOptions, secret::BuildInfoAux};
 use swiftide_core::prelude::StreamExt as _;
 
 use crate::{client::Client, ImageBuildError};
@@ -17,9 +17,8 @@ impl ImageBuilder {
 
     pub async fn build_image(
         &self,
-        context_path: &Path,
         context: Vec<u8>,
-        dockerfile: &Path,
+        dockerfile: &str,
         image_name: &str,
         tag: &str,
     ) -> Result<String, ImageBuildError> {
@@ -30,20 +29,10 @@ impl ImageBuilder {
 
         let image_name_with_tag = format!("{image_name}:{tag}");
 
-        let relative_dockerfile = dockerfile
-            .canonicalize()
-            .map_err(|e| ImageBuildError::InvalidImageName(e.to_string()))?
-            .strip_prefix(
-                std::fs::canonicalize(context_path)
-                    .map_err(|e| ImageBuildError::InvalidImageName(e.to_string()))?,
-            )
-            .map_err(|e| ImageBuildError::InvalidImageName(e.to_string()))?
-            .to_path_buf();
-
         let build_options = BuildImageOptions {
             t: image_name_with_tag.as_str(),
             rm: true,
-            dockerfile: &relative_dockerfile.to_string_lossy(),
+            dockerfile,
             #[cfg(feature = "buildkit")]
             version: bollard::image::BuilderVersion::BuilderBuildKit,
             #[cfg(feature = "buildkit")]

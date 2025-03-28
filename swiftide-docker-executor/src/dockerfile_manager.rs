@@ -29,8 +29,8 @@ impl DockerfileManager {
 
         let mangled_dockerfile = mangle(&valid_dockerfile_path).await?;
 
-        let mut tmp_dockerfile = tempfile::NamedTempFile::new_in(&self.context_path)
-            .map_err(DockerfileError::TempFileError)?;
+        let mut tmp_dockerfile =
+            tempfile::NamedTempFile::new().map_err(DockerfileError::TempFileError)?;
 
         tmp_dockerfile
             .write_all(mangled_dockerfile.content.as_bytes())

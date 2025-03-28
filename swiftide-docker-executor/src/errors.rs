@@ -4,10 +4,10 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum DockerExecutorError {
-    #[error("error from bollard: {0}")]
+    #[error("error from docker: {0}")]
     Docker(#[from] bollard::errors::Error),
 
-    #[error("error building context for image: {0}")]
+    #[error(transparent)]
     Context(#[from] ContextError),
 
     #[error("container state missing for: {0}")]
@@ -19,19 +19,19 @@ pub enum DockerExecutorError {
     #[error("error with io {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("error transforming dockerfile: {0}")]
+    #[error(transparent)]
     Transform(#[from] MangleError),
 
     #[error("error starting container: {0}")]
     Start(anyhow::Error),
 
-    #[error("Failed to build image: {0}")]
+    #[error(transparent)]
     ImageBuild(#[from] ImageBuildError),
 
-    #[error("Failed to prepare dockerfile: {0}")]
+    #[error(transparent)]
     DockerfilePreparation(#[from] DockerfileError),
 
-    #[error("Failed to start container: {0}")]
+    #[error(transparent)]
     ContainerStart(#[from] ContainerStartError),
 }
 
@@ -48,6 +48,9 @@ pub enum ContextError {
 
     #[error("failed to convert to relative path{0}")]
     RelativePath(#[from] StripPrefixError),
+
+    #[error("error with custom dockerfile: {0}")]
+    CustomDockerfile(String),
 }
 
 #[derive(Error, Debug)]

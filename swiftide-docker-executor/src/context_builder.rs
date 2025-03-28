@@ -17,11 +17,15 @@ type ContextArchive = Vec<u8>;
 pub struct ContextBuilder {
     context_path: PathBuf,
     ignore: Gitignore,
+    dockerfile: PathBuf,
     global: Option<Gitignore>,
 }
 
 impl ContextBuilder {
-    pub fn from_path(context_path: impl Into<PathBuf>) -> Result<Self, ContextError> {
+    pub fn from_path(
+        context_path: impl Into<PathBuf>,
+        dockerfile: impl AsRef<Path>,
+    ) -> Result<Self, ContextError> {
         let path = context_path.into();
         let mut gitignore = GitignoreBuilder::new(&path);
 
@@ -43,6 +47,7 @@ impl ContextBuilder {
         };
 
         Ok(Self {
+            dockerfile: dockerfile.as_ref().to_path_buf(),
             context_path: path,
             ignore: gitignore,
             global: maybe_global,
@@ -93,6 +98,27 @@ impl ContextBuilder {
         let buffer = Vec::new();
 
         let mut tar = Builder::new(buffer);
+
+        // First lets add the actual dockerfile
+        let mut file = fs_err::tokio::File::open(&self.dockerfile).await?;
+        let mut buffer_content = Vec::new();
+        file.read_to_end(&mut buffer_content).await?;
+
+        // Prepare header for Dockerfile
+        let mut header = Header::new_gnu();
+        header.set_size(buffer_content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+
+        // Add Dockerfile to tar
+        tar.append_data(
+            &mut header,
+            self.dockerfile
+                .file_name()
+                .expect("Infallible; No file name"),
+            &*buffer_content,
+        )
+        .await?;
 
         for entry in self.iter() {
             let Ok(entry) = entry else {
@@ -185,7 +211,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
-    use tempfile::tempdir;
+    use tempfile::{tempdir, NamedTempFile};
 
     #[test_log::test(tokio::test)]
     async fn test_is_ignored() {
@@ -202,7 +228,9 @@ mod tests {
 
         dbg!(&std::fs::read_to_string(context_path.join(".gitignore")).unwrap());
 
-        let context_builder = ContextBuilder::from_path(&context_path).unwrap();
+        let dockerfile = NamedTempFile::new().unwrap();
+
+        let context_builder = ContextBuilder::from_path(&context_path, dockerfile.path()).unwrap();
 
         // Create test files
         let log_file = context_path.join("test.log");
@@ -227,7 +255,8 @@ mod tests {
         let mut gitignore_file = fs::File::create(context_path.join(".gitignore")).unwrap();
         writeln!(gitignore_file, ".git").unwrap();
 
-        let context_builder = ContextBuilder::from_path(&context_path).unwrap();
+        let dockerfile = NamedTempFile::new().unwrap();
+        let context_builder = ContextBuilder::from_path(&context_path, dockerfile.path()).unwrap();
 
         assert!(!context_builder.is_ignored(".git"));
     }
@@ -239,7 +268,9 @@ mod tests {
 
         // Create .gitignore file
 
-        let context_builder = ContextBuilder::from_path(&context_path).unwrap();
+        let dockerfile = NamedTempFile::new().unwrap();
+
+        let context_builder = ContextBuilder::from_path(&context_path, dockerfile.path()).unwrap();
 
         assert!(!context_builder.is_ignored(".git"));
         assert!(!context_builder.is_ignored("Dockerfile"));
