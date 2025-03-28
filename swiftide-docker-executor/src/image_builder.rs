@@ -1,7 +1,7 @@
-use std::{io::Write as _, path::Path, sync::Arc};
+use std::{collections::HashMap, io::Write as _, path::Path, sync::Arc};
 
 use anyhow::Result;
-use bollard::{image::BuildImageOptions, secret::BuildInfoAux};
+use bollard::{auth::DockerCredentials, image::BuildImageOptions, secret::BuildInfoAux};
 use swiftide_core::prelude::StreamExt as _;
 
 use crate::{client::Client, ImageBuildError};
@@ -42,10 +42,11 @@ impl ImageBuilder {
 
         let build_options = BuildImageOptions {
             t: image_name_with_tag.as_str(),
-            rm: false, // Keep as much cache around as we can
-            pull: true,
+            rm: true,
             dockerfile: &relative_dockerfile.to_string_lossy(),
+            #[cfg(feature = "buildkit")]
             version: bollard::image::BuilderVersion::BuilderBuildKit,
+            #[cfg(feature = "buildkit")]
             session: Some(image_name_with_tag.to_string()),
             ..Default::default()
         };

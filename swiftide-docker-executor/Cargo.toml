@@ -26,9 +26,9 @@ tracing.workspace = true
 indoc = "2.0"
 anyhow = "1.0"
 dirs = "6.0"
-tempfile = "3.15"
+tempfile = "3.19"
 http-body-util = "0.1.2"
-flate2 = "1.0"
+flate2 = "1.1"
 tokio.workspace = true
 fs-err = { version = "3.1.0", features = ["tokio"] }
 
@@ -44,3 +44,7 @@ swiftide-agents = "0.22"
 test-log = { version = "0.2", features = ["trace"] }
 insta = { version = "1.42.1", features = ["filters"] }
 pretty_assertions = "1.4"
+
+[features]
+default = []
+buildkit = ["bollard/buildkit"]
