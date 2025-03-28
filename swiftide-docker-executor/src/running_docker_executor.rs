@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     client::Client, container_configurator::ContainerConfigurator,
     container_starter::ContainerStarter, dockerfile_manager::DockerfileManager,
-    image_builder::ImageBuilder, ContextBuilder, DockerExecutorError,
+    image_builder::ImageBuilder, ContextBuilder, ContextError, DockerExecutorError,
 };
 
 pub mod shell {
@@ -65,9 +65,21 @@ impl RunningDockerExecutor {
             "Creating archive for context from {}",
             context_path.display()
         );
-        let context = ContextBuilder::from_path(context_path)?.build_tar().await?;
+        let context = ContextBuilder::from_path(context_path, tmp_dockerfile.path())?
+            .build_tar()
+            .await?;
 
         tracing::debug!("Context build with size: {} bytes", context.len());
+
+        let tmp_dockerfile_name = tmp_dockerfile
+            .path()
+            .file_name()
+            .ok_or_else(|| {
+                ContextError::CustomDockerfile("Could not read custom dockerfile".to_string())
+            })
+            .map(|s| s.to_string_lossy().to_string())?;
+
+        drop(tmp_dockerfile); // Make sure the temporary file is removed right away
 
         // Build image
         let tag = container_uuid
@@ -79,13 +91,7 @@ impl RunningDockerExecutor {
 
         let image_builder = ImageBuilder::new(docker.clone());
         let image_name_with_tag = image_builder
-            .build_image(
-                context_path,
-                context,
-                tmp_dockerfile.path(),
-                image_name,
-                &tag,
-            )
+            .build_image(context, tmp_dockerfile_name.as_ref(), image_name, &tag)
             .await?;
 
         // Configure container
@@ -106,18 +112,8 @@ impl RunningDockerExecutor {
             host_port,
         };
 
-        // we only want the filename
-        let Some(tmp_dockerfile_path) = tmp_dockerfile
-            .path()
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-        else {
-            return Ok(executor);
-        };
-
-        drop(tmp_dockerfile); // Make sure the temporary file is removed right away
         executor
-            .exec_shell(&format!("rm {}", tmp_dockerfile_path))
+            .exec_shell(&format!("rm {}", tmp_dockerfile_name.as_str()))
             .await
             .context("failed to remove temporary dockerfile")
             .map_err(DockerExecutorError::Start)?;
