@@ -34,6 +34,7 @@ impl ShellExecutor for MyShellExecutor {
             .arg("-c")
             .arg(&command)
             .current_dir("/app")
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
