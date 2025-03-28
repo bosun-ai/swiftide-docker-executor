@@ -40,33 +40,20 @@ impl ImageBuilder {
             .map_err(|e| ImageBuildError::InvalidImageName(e.to_string()))?
             .to_path_buf();
 
-        let credentials = if std::env::var("CI").ok().is_some() {
-            let creds = DockerCredentials {
-                username: std::env::var("DOCKER_USERNAME").ok(),
-                password: std::env::var("DOCKER_PASSWORD").ok(),
-                ..Default::default()
-            };
-
-            let mut hashmap = HashMap::new();
-            hashmap.insert("docker.io".to_string(), creds);
-
-            Some(hashmap)
-        } else {
-            None
-        };
-
         let build_options = BuildImageOptions {
             t: image_name_with_tag.as_str(),
             rm: true,
             dockerfile: &relative_dockerfile.to_string_lossy(),
+            #[cfg(feature = "buildkit")]
             version: bollard::image::BuilderVersion::BuilderBuildKit,
+            #[cfg(feature = "buildkit")]
             session: Some(image_name_with_tag.to_string()),
             ..Default::default()
         };
 
         let mut build_stream =
             self.docker
-                .build_image(build_options, credentials, Some(compressed.into()));
+                .build_image(build_options, None, Some(compressed.into()));
 
         while let Some(log) = build_stream.next().await {
             match log {

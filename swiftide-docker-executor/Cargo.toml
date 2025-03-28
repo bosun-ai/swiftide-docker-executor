@@ -44,3 +44,7 @@ swiftide-agents = "0.22"
 test-log = { version = "0.2", features = ["trace"] }
 insta = { version = "1.42.1", features = ["filters"] }
 pretty_assertions = "1.4"
+
+[features]
+default = []
+buildkit = ["bollard/buildkit"]

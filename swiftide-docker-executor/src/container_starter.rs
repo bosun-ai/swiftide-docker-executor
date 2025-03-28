@@ -50,6 +50,7 @@ impl ContainerStarter {
         // we wait for the 'listening on' message from the grpc client, otherwise we wait and
         // forward logs, up to 10s
         let mut count = 0;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         while let Some(log) = self
             .docker
             .logs(
