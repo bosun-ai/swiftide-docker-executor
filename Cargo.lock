@@ -235,6 +235,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "backoff"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b62ddb9cb1ec0a098ad4bbf9344d0713fa193ae1a80af55febcff2627b6a00c1"
+dependencies = [
+ "futures-core",
+ "getrandom 0.2.15",
+ "instant",
+ "pin-project-lite",
+ "rand",
+ "tokio",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1268,6 +1282,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "instant"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2198,9 +2221,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swiftide-agents"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d41cee50b33eb748da269ed9ff7608912b5cec06cc697059e21893b30031bf05"
+checksum = "374d936e00e81d17f03172dad43bd007eb07d57213af31751fa456f1962aa554"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2220,12 +2243,13 @@ dependencies = [
 
 [[package]]
 name = "swiftide-core"
-version = "0.23.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afb9434bb4913006b58294f3f720c42e7a2f7207ad2e7ad151d8c0e574e3eefe"
+checksum = "a15bb248d833e35a3edb1b25398b04d8764e0d557bb5b1507bb6650e038bc472"
 dependencies = [
  "anyhow",
  "async-trait",
+ "backoff",
  "derive_builder",
  "dyn-clone",
  "futures-util",
