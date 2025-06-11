@@ -21,6 +21,16 @@ impl ContainerStarter {
         container_uuid: &Uuid,
         config: Config<String>,
     ) -> Result<(String, String), ContainerStartError> {
+        // Strip tag suffix from image name if present
+        let image_name = if let Some(index) = image_name.find(':') {
+            &image_name[..index]
+        } else {
+            image_name
+        };
+
+        // Replace invalid characters in image name ('/')
+        let image_name = image_name.replace('/', "-");
+
         let container_name = format!("{image_name}-{container_uuid}");
         let create_options = CreateContainerOptions {
             name: container_name.as_str(),
@@ -33,6 +43,8 @@ impl ContainerStarter {
             .await
             .map_err(ContainerStartError::Creation)?
             .id;
+
+        tracing::info!("Created container with ID: {}", &container_id);
 
         self.docker
             .start_container(&container_id, None::<StartContainerOptions<String>>)

@@ -504,3 +504,23 @@ WORKDIR /app
 
     assert!(executor.is_running().await);
 }
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_existing_image_no_context() {
+    let executor = DockerExecutor::default()
+        .with_existing_image("bosunai/swiftide-docker-service:latest")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    assert!(executor.is_running().await);
+
+    let output = executor.exec_cmd(&Command::shell("ls")).await;
+    // assert_eq!(output.to_string(), "hello");
+    println!("--- container logs ---");
+    for log in executor.logs().await.unwrap() {
+        println!("{log}");
+    }
+    output.unwrap();
+}

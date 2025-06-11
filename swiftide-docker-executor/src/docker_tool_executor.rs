@@ -8,7 +8,7 @@ use crate::{DockerExecutorError, RunningDockerExecutor};
 pub struct DockerExecutor {
     context_path: PathBuf,
     image_name: String,
-    dockerfile: PathBuf,
+    dockerfile: Option<PathBuf>,
     container_uuid: Uuid,
 }
 
@@ -18,7 +18,7 @@ impl Default for DockerExecutor {
             container_uuid: Uuid::new_v4(),
             context_path: ".".into(),
             image_name: "docker-executor".into(),
-            dockerfile: "Dockerfile".into(),
+            dockerfile: Some("Dockerfile".into()),
         }
     }
 }
@@ -27,6 +27,17 @@ impl DockerExecutor {
     /// Set the path to build the context from (default ".")
     pub fn with_context_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.context_path = path.into();
+
+        self
+    }
+
+    /// Start with an existing image (full tag). Will skip building the image, unless you set a new
+    /// Dockerfile. Note that this requires that the image has the service available as a binary.
+    pub fn with_existing_image(&mut self, path: impl Into<String>) -> &mut Self {
+        self.image_name = path.into();
+
+        // If an existing image is used, we don't need to build it
+        self.dockerfile = None;
 
         self
     }
@@ -47,7 +58,7 @@ impl DockerExecutor {
 
     /// Overwrite the dockerfile to use (default "Dockerfile")
     pub fn with_dockerfile(&mut self, path: impl Into<PathBuf>) -> &mut Self {
-        self.dockerfile = path.into();
+        self.dockerfile = Some(path.into());
         self
     }
 
@@ -58,7 +69,7 @@ impl DockerExecutor {
         RunningDockerExecutor::start(
             self.container_uuid,
             &self.context_path,
-            &self.dockerfile,
+            self.dockerfile.as_deref(),
             &self.image_name,
         )
         .await
