@@ -51,57 +51,74 @@ impl RunningDockerExecutor {
     pub async fn start(
         container_uuid: Uuid,
         context_path: &Path,
-        dockerfile: &Path,
+        dockerfile: Option<&Path>,
         image_name: &str,
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
         let docker = Client::lazy_client().await?;
 
-        // Prepare dockerfile
-        let dockerfile_manager = DockerfileManager::new(context_path);
-        let tmp_dockerfile = dockerfile_manager.prepare_dockerfile(dockerfile).await?;
+        let mut image_name = image_name.to_string();
 
-        // Build context
-        tracing::warn!(
-            "Creating archive for context from {}",
-            context_path.display()
-        );
-        let context = ContextBuilder::from_path(context_path, tmp_dockerfile.path())?
-            .build_tar()
-            .await?;
+        // Any temporary dockrerfile created during the build process
+        let mut tmp_dockerfile_name = None;
 
-        tracing::debug!("Context build with size: {} bytes", context.len());
+        // Only build if a dockerfile is provided
+        if let Some(dockerfile) = dockerfile {
+            // Prepare dockerfile
+            let dockerfile_manager = DockerfileManager::new(context_path);
+            let tmp_dockerfile = dockerfile_manager.prepare_dockerfile(dockerfile).await?;
 
-        let tmp_dockerfile_name = tmp_dockerfile
-            .path()
-            .file_name()
-            .ok_or_else(|| {
-                ContextError::CustomDockerfile("Could not read custom dockerfile".to_string())
-            })
-            .map(|s| s.to_string_lossy().to_string())?;
+            // Build context
+            tracing::warn!(
+                "Creating archive for context from {}",
+                context_path.display()
+            );
+            let context = ContextBuilder::from_path(context_path, tmp_dockerfile.path())?
+                .build_tar()
+                .await?;
 
-        drop(tmp_dockerfile); // Make sure the temporary file is removed right away
+            tracing::debug!("Context build with size: {} bytes", context.len());
 
-        // Build image
-        let tag = container_uuid
-            .to_string()
-            .split_once('-')
-            .map(|(tag, _)| tag)
-            .unwrap_or("latest")
-            .to_string();
+            let tmp_dockerfile_name_inner = tmp_dockerfile
+                .path()
+                .file_name()
+                .ok_or_else(|| {
+                    ContextError::CustomDockerfile("Could not read custom dockerfile".to_string())
+                })
+                .map(|s| s.to_string_lossy().to_string())?;
 
-        let image_builder = ImageBuilder::new(docker.clone());
-        let image_name_with_tag = image_builder
-            .build_image(context, tmp_dockerfile_name.as_ref(), image_name, &tag)
-            .await?;
+            drop(tmp_dockerfile); // Make sure the temporary file is removed right away
+
+            // Build image
+            let tag = container_uuid
+                .to_string()
+                .split_once('-')
+                .map(|(tag, _)| tag)
+                .unwrap_or("latest")
+                .to_string();
+
+            let image_builder = ImageBuilder::new(docker.clone());
+            let image_name_with_tag = image_builder
+                .build_image(
+                    context,
+                    tmp_dockerfile_name_inner.as_ref(),
+                    &image_name,
+                    &tag,
+                )
+                .await?;
+
+            image_name = image_name_with_tag;
+            tmp_dockerfile_name = Some(tmp_dockerfile_name_inner);
+        }
 
         // Configure container
         let container_config = ContainerConfigurator::new(docker.socket_path.clone())
-            .create_container_config(&image_name_with_tag);
+            .create_container_config(&image_name);
 
         // Start container
+        tracing::info!("Starting container with image: {image_name} and uuid: {container_uuid}");
         let container_starter = ContainerStarter::new(docker.clone());
         let (container_id, host_port) = container_starter
-            .start_container(image_name, &container_uuid, container_config)
+            .start_container(&image_name, &container_uuid, container_config)
             .await?;
 
         // Remove the temporary dockerfile from the container
@@ -112,11 +129,13 @@ impl RunningDockerExecutor {
             host_port,
         };
 
-        executor
-            .exec_shell(&format!("rm {}", tmp_dockerfile_name.as_str()))
-            .await
-            .context("failed to remove temporary dockerfile")
-            .map_err(DockerExecutorError::Start)?;
+        if let Some(tmp_dockerfile_name) = tmp_dockerfile_name {
+            executor
+                .exec_shell(&format!("rm {}", tmp_dockerfile_name.as_str()))
+                .await
+                .context("failed to remove temporary dockerfile")
+                .map_err(DockerExecutorError::Start)?;
+        }
 
         Ok(executor)
     }
