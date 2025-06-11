@@ -12,6 +12,12 @@ env:
   RUST_LOG: "debug"
   RUST_BACKTRACE: 1
 
+permissions:
+  contents: read
+  packages: read
+  id-token: read
+  attestations: read
+
 jobs:
   lint:
     name: Lint
