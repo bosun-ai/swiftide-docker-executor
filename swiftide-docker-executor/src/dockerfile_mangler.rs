@@ -42,11 +42,24 @@ pub async fn mangle(path: &Path) -> Result<MangledDockerfile, MangleError> {
     // Copy swiftide-docker-service, rg, and fd into the image
     let copy_lines = ["swiftide-docker-service", "rg", "fd"]
         .iter()
-        .map(|binary| format!("COPY --from={image_name} /usr/bin/{binary} /usr/local/bin/{binary}"))
+        .map(|binary| format!("COPY --from={image_name} /usr/bin/{binary} /usr/bin/{binary}"))
         .collect::<Vec<String>>()
         .join("\n");
 
     lines.insert(insert_pos, &copy_lines);
+
+    // If the last FROM line is alpine, add gcompat and libgcc
+    if let Some(last_from) = lines
+        .iter()
+        .rfind(|line| line.trim_start().to_lowercase().starts_with("from"))
+    {
+        if last_from.to_lowercase().contains("alpine") {
+            lines.insert(
+                insert_pos.saturating_add(1),
+                "RUN apk add --no-cache gcompat libgcc pcre2 ripgrep fd",
+            );
+        }
+    }
 
     let new_dockerfile = lines.join("\n");
     tracing::debug!(
@@ -93,11 +106,9 @@ mod tests {
             "action {}",
             result.content
         );
-        assert!(result
-            .content
-            .contains("/usr/local/bin/swiftide-docker-service"));
-        assert!(result.content.contains("/usr/local/bin/rg"));
-        assert!(result.content.contains("/usr/local/bin/fd"));
+        assert!(result.content.contains("/usr/bin/swiftide-docker-service"));
+        assert!(result.content.contains("/usr/bin/rg"));
+        assert!(result.content.contains("/usr/bin/fd"));
         assert_snapshot!(result.content)
     }
 

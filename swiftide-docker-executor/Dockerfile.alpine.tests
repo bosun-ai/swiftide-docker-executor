@@ -1,0 +1,7 @@
+# A lightweight image used for tests
+FROM alpine:latest
+
+COPY . /app
+
+WORKDIR /app/
+

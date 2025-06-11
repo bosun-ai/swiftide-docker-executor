@@ -7,6 +7,7 @@ use crate::{DockerExecutor, DockerExecutorError};
 
 // A much smaller busybox image for faster tests
 const TEST_DOCKERFILE: &str = "Dockerfile.tests";
+const TEST_DOCKERFILE_ALPINE: &str = "Dockerfile.alpine.tests";
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_runs_docker_and_echos() {
@@ -27,6 +28,81 @@ async fn test_runs_docker_and_echos() {
         .unwrap();
 
     assert_eq!(output.to_string(), "hello");
+
+    let output = executor
+        .exec_cmd(&Command::Shell("which rg".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(output.to_string(), "/usr/bin/rg");
+
+    let output = executor
+        .exec_cmd(&Command::Shell("rg Cargo.toml".to_string()))
+        .await
+        .unwrap();
+
+    assert!(
+        output.to_string().contains("src/tests.rs"),
+        "{output} does not contain expected path"
+    );
+
+    let output = executor
+        .exec_cmd(&Command::shell("fd Cargo.toml"))
+        .await
+        .unwrap();
+
+    assert!(
+        output.to_string().contains("Cargo.toml"),
+        "{output} does not contain expected path"
+    );
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_runs_on_alpine() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE_ALPINE)
+        .with_context_path(".")
+        .with_image_name("tests")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    assert!(executor.is_running().await, "Container should be running");
+
+    let output = executor
+        .exec_cmd(&Command::Shell("echo hello".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(output.to_string(), "hello");
+
+    let output = executor
+        .exec_cmd(&Command::Shell("which rg".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(output.to_string(), "/usr/bin/rg");
+
+    let output = executor
+        .exec_cmd(&Command::Shell("rg Cargo.toml".to_string()))
+        .await
+        .unwrap();
+
+    assert!(
+        output.to_string().contains("src/tests.rs"),
+        "{output} does not contain expected path"
+    );
+
+    let output = executor
+        .exec_cmd(&Command::shell("fd Cargo.toml"))
+        .await
+        .unwrap();
+
+    assert!(
+        output.to_string().contains("Cargo.toml"),
+        "{output} does not contain expected path"
+    );
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]

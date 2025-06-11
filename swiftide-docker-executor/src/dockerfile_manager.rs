@@ -21,9 +21,7 @@ impl DockerfileManager {
     ) -> Result<tempfile::NamedTempFile, DockerfileError> {
         let valid_dockerfile_path = if dockerfile.is_relative() {
             self.context_path.join(dockerfile)
-            // dockerfile.to_path_buf()
         } else {
-            // self.context_path.join(dockerfile)
             dockerfile.to_path_buf()
         };
 

@@ -70,6 +70,7 @@ impl ContainerStarter {
                 Some(LogsOptions::<&str> {
                     stdout: true,
                     stderr: true,
+                    since: 0,
                     ..Default::default()
                 }),
             )
