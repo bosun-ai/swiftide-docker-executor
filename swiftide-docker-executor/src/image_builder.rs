@@ -1,7 +1,9 @@
 use std::{io::Write as _, sync::Arc};
 
 use anyhow::Result;
-use bollard::{image::BuildImageOptions, secret::BuildInfoAux};
+use bollard::image::BuildImageOptions;
+#[cfg(feature = "buildkit")]
+use bollard::secret::BuildInfoAux;
 use swiftide_core::prelude::StreamExt as _;
 
 use crate::{client::Client, ImageBuildError};
@@ -52,6 +54,7 @@ impl ImageBuilder {
                     }
 
                     // TODO: Verify to_string() is good enough
+                    #[cfg(feature = "buildkit")]
                     if let Some(BuildInfoAux::BuildKit(inner)) = output.aux {
                         inner
                             .vertexes

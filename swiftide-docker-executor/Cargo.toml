@@ -13,9 +13,9 @@ description.workspace = true
 categories.workspace = true
 
 [dependencies]
-swiftide-core = "0.26"
+swiftide-core = "0.27"
 
-bollard = { version = "0.18", features = ["buildkit"] }
+bollard = { version = "0.18.1" }
 thiserror = "2.0"
 async-trait = "0.1"
 ignore = "0.4"
@@ -40,7 +40,7 @@ tonic-build = { workspace = true }
 
 
 [dev-dependencies]
-swiftide-agents = "0.26"
+swiftide-agents = "0.27"
 test-log = { version = "0.2", features = ["trace"] }
 insta = { version = "1.42.1", features = ["filters"] }
 pretty_assertions = "1.4"
