@@ -33,7 +33,6 @@ impl ShellExecutor for MyShellExecutor {
         let mut child = Command::new("sh")
             .arg("-c")
             .arg(&command)
-            .current_dir("/app")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
