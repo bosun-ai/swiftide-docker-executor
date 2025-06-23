@@ -10,6 +10,7 @@ pub struct DockerExecutor {
     image_name: String,
     dockerfile: Option<PathBuf>,
     container_uuid: Uuid,
+    user: Option<String>,
 }
 
 impl Default for DockerExecutor {
@@ -19,6 +20,7 @@ impl Default for DockerExecutor {
             context_path: ".".into(),
             image_name: "docker-executor".into(),
             dockerfile: Some("Dockerfile".into()),
+            user: None,
         }
     }
 }
@@ -27,6 +29,13 @@ impl DockerExecutor {
     /// Set the path to build the context from (default ".")
     pub fn with_context_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.context_path = path.into();
+
+        self
+    }
+
+    /// Set the user (or user_id:group_id) to run the container as (default None, which means root)
+    pub fn with_user(&mut self, user: impl Into<String>) -> &mut Self {
+        self.user = Some(user.into());
 
         self
     }
@@ -71,6 +80,7 @@ impl DockerExecutor {
             &self.context_path,
             self.dockerfile.as_deref(),
             &self.image_name,
+            self.user.as_deref(),
         )
         .await
     }

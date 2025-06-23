@@ -53,6 +53,7 @@ impl RunningDockerExecutor {
         context_path: &Path,
         dockerfile: Option<&Path>,
         image_name: &str,
+        user: Option<&str>,
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
         let docker = Client::lazy_client().await?;
 
@@ -112,7 +113,7 @@ impl RunningDockerExecutor {
 
         // Configure container
         let container_config = ContainerConfigurator::new(docker.socket_path.clone())
-            .create_container_config(&image_name);
+            .create_container_config(&image_name, user);
 
         // Start container
         tracing::info!("Starting container with image: {image_name} and uuid: {container_uuid}");

@@ -11,7 +11,7 @@ impl ContainerConfigurator {
         Self { socket_path }
     }
 
-    pub fn create_container_config(&self, image_name: &str) -> Config<String> {
+    pub fn create_container_config(&self, image_name: &str, user: Option<&str>) -> Config<String> {
         let internal_port = "50051/tcp";
         let port_bindings = HashMap::from([(
             internal_port.to_string(),
@@ -30,6 +30,7 @@ impl ContainerConfigurator {
             cmd: Some(vec!["swiftide-docker-service".to_string()]),
             tty: Some(true),
             entrypoint: Some(vec!["".to_string()]),
+            user: user.map(|u| u.to_string()),
             exposed_ports: Some(exposed_ports),
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
