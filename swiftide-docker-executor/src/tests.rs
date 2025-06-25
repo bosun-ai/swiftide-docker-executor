@@ -1,7 +1,9 @@
 use std::path::Path;
 
+use anyhow::Result;
 use bollard::secret::ContainerStateStatusEnum;
-use swiftide_core::{Command, ToolExecutor as _};
+use swiftide_core::{indexing::Node, Command, Loader as _, ToolExecutor as _};
+use tokio_stream::StreamExt as _;
 
 use crate::{DockerExecutor, DockerExecutorError};
 
@@ -599,4 +601,30 @@ async fn test_existing_image_no_context() {
         println!("{log}");
     }
     output.unwrap();
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_loading_files() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("tests")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    assert!(executor.is_running().await, "Container should be running");
+
+    let loader = executor.into_file_loader("src/".to_string(), vec!["rs".to_string()]);
+    let loader_stream = loader.into_stream();
+
+    // Collect the results from the stream and assert there's a bunch of rust files
+    let files = loader_stream.collect::<Result<Vec<Node>>>().await.unwrap();
+
+    assert!(!files.is_empty(), "No files loaded");
+    assert!(
+        files.iter().any(|node| node.path.ends_with("tests.rs")),
+        "Expected to find tests.rs in loaded files"
+    );
 }

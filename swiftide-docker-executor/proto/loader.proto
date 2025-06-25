@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package loader;
+
+// The gRPC service definition.
+service Loader {
+  // Runs a shell command and returns exit code, stdout, and stderr.
+  rpc LoadFiles(LoadFilesRequest) returns (stream NodeResponse);
+}
+
+// The request message containing the command to run.
+message LoadFilesRequest {
+  string root_path = 1;
+  repeated string file_extensions = 2;
+}
+
+// The response message containing exit code, stdout, and stderr.
+message NodeResponse {
+  string path = 1;
+  string chunk = 2;
+  int32 original_size = 3;
+}
+

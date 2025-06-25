@@ -13,7 +13,7 @@ description.workspace = true
 categories.workspace = true
 
 [dependencies]
-swiftide-core = "0.27"
+swiftide-core.workspace = true
 
 bollard = { version = "0.18.1" }
 thiserror = "2.0"
@@ -30,6 +30,7 @@ tempfile = "3.19"
 http-body-util = "0.1.2"
 flate2 = "1.1"
 tokio.workspace = true
+tokio-stream = "0.1.17"
 fs-err = { version = "3.1.0", features = ["tokio"] }
 
 tonic.workspace = true
@@ -46,5 +47,6 @@ insta = { version = "1.42.1", features = ["filters"] }
 pretty_assertions = "1.4"
 
 [features]
-default = []
+default = ["file-loader"]
+file-loader = []
 buildkit = ["bollard/buildkit"]

@@ -8,12 +8,12 @@ use tonic::{Request, Response, Status};
 // The module `shell` is created by Tonic automatically because your
 // package in shell.proto is named `shell`. The name "shell" below must
 // match `package shell;` from shell.proto.
-pub mod shell {
+pub mod codegen {
     tonic::include_proto!("shell");
 }
 
-use shell::shell_executor_server::ShellExecutor;
-use shell::{ShellRequest, ShellResponse};
+use codegen::shell_executor_server::ShellExecutor;
+use codegen::{ShellRequest, ShellResponse};
 
 #[derive(Debug, Default)]
 pub struct MyShellExecutor;

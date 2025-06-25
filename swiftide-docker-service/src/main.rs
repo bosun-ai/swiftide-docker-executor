@@ -1,7 +1,9 @@
-use grpc_service::{shell::shell_executor_server::ShellExecutorServer, MyShellExecutor};
+use executor::{codegen::shell_executor_server::ShellExecutorServer, MyShellExecutor};
 use tonic::transport::Server;
 
-mod grpc_service;
+mod executor;
+#[cfg(feature = "file-loader")]
+mod loader;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,14 +13,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target(false)
         .init();
     let addr = "0.0.0.0:50051".parse()?;
-    let shell_executor = MyShellExecutor;
 
     tracing::warn!("ShellExecutor gRPC server listening on {}", addr);
 
-    Server::builder()
-        .add_service(ShellExecutorServer::new(shell_executor))
-        .serve(addr)
-        .await?;
+    let mut builder = Server::builder().add_service(ShellExecutorServer::new(MyShellExecutor));
+
+    #[cfg(feature = "file-loader")]
+    {
+        use loader::codegen::loader_server::LoaderServer;
+        use loader::MyLoaderExecutor;
+
+        tracing::warn!("FileLoader gRPC server listening on {}", addr);
+        builder = builder.add_service(LoaderServer::new(MyLoaderExecutor));
+    }
+
+    builder.serve(addr).await?;
 
     Ok(())
 }
