@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use codegen::{loader_client::LoaderClient, LoadFilesRequest, NodeResponse};
 use swiftide_core::{indexing::Node, Loader};
 use tokio::runtime::Handle;
@@ -10,13 +12,22 @@ pub mod codegen {
 
 #[derive(Debug, Clone)]
 pub struct FileLoader {
-    path: String,
+    path: PathBuf,
     extensions: Vec<String>,
     executor: RunningDockerExecutor,
 }
 
 impl RunningDockerExecutor {
-    pub fn into_file_loader(self, path: String, extensions: Vec<String>) -> FileLoader {
+    /// Creates a file loader from the executor. If needed it is safe to clone the executor.
+    ///
+    /// The loader can be used with a swiftide indexing pipeline.
+    pub fn into_file_loader<V: IntoIterator<Item = T>, T: Into<String>>(
+        self,
+        path: impl Into<PathBuf>,
+        extensions: V,
+    ) -> FileLoader {
+        let path = path.into();
+        let extensions = extensions.into_iter().map(Into::into).collect::<Vec<_>>();
         FileLoader {
             path,
             extensions,
@@ -40,7 +51,7 @@ impl Loader for FileLoader {
         tokio::task::spawn(async move {
             let stream = match client
                 .load_files(LoadFilesRequest {
-                    root_path: self.path,
+                    root_path: self.path.to_string_lossy().to_string(),
                     file_extensions: self.extensions,
                 })
                 .await

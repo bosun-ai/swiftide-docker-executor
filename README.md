@@ -22,6 +22,21 @@ let context = DefaultContext::from_executor(executor);
 let agent = Agent::builder().context(context).build();
 ```
 
+## Loading files into a Swiftide indexing pipeline
+
+Additionally, the executor can be used to load files into a Swiftide indexing pipeline.
+
+```rust
+let executor = DockerExecutor::default()
+    .with_context_path(".")
+    .with_image_name("test")
+    .with_dockerfile("Dockerfile.overwritten");
+
+let loader = executor.into_file_loader("./", vec![".rs"]);
+
+swiftide::indexing::from_loader(loader)
+```
+
 ## How it works
 
 The executor communicates with docker over a grpc client build in `swiftide-docker-service`. The service is published on docker hub.
