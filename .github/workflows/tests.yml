@@ -55,3 +55,31 @@ jobs:
       - run: just docker-build-service
       - name: "Test"
         run: cargo test --no-fail-fast
+
+  test-buildkit:
+    name: Test Buildkit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOCKER_BUILDKIT: 1
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@just
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - run: just docker-build-service
+      - run: docker pull rust:1.87-slim
+      - run: docker pull alpine:latest
+      - run: docker info
+      - name: "Test"
+        run: cargo test --no-fail-fast --features buildkit

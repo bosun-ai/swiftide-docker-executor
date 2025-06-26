@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bollard::{container::Config, secret::PortBinding};
+use bollard::{models::ContainerCreateBody, secret::PortBinding};
 
 pub struct ContainerConfigurator {
     socket_path: String,
@@ -11,7 +11,11 @@ impl ContainerConfigurator {
         Self { socket_path }
     }
 
-    pub fn create_container_config(&self, image_name: &str, user: Option<&str>) -> Config<String> {
+    pub fn create_container_config(
+        &self,
+        image_name: &str,
+        user: Option<&str>,
+    ) -> ContainerCreateBody {
         let internal_port = "50051/tcp";
         let port_bindings = HashMap::from([(
             internal_port.to_string(),
@@ -25,7 +29,7 @@ impl ContainerConfigurator {
         let mut exposed_ports = HashMap::new();
         exposed_ports.insert("50051/tcp".to_string(), empty);
 
-        Config {
+        ContainerCreateBody {
             image: Some(image_name.to_string()),
             cmd: Some(vec!["swiftide-docker-service".to_string()]),
             tty: Some(true),

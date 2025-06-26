@@ -1,9 +1,10 @@
 use std::{io::Write as _, sync::Arc};
 
 use anyhow::Result;
-use bollard::image::BuildImageOptions;
+use bollard::query_parameters::BuildImageOptions;
 #[cfg(feature = "buildkit")]
 use bollard::secret::BuildInfoAux;
+use http_body_util::{Either, Full};
 use swiftide_core::prelude::StreamExt as _;
 
 use crate::{client::Client, ImageBuildError};
@@ -32,19 +33,21 @@ impl ImageBuilder {
         let image_name_with_tag = format!("{image_name}:{tag}");
 
         let build_options = BuildImageOptions {
-            t: image_name_with_tag.as_str(),
+            t: Some(image_name_with_tag.clone()),
             rm: true,
-            dockerfile,
+            dockerfile: dockerfile.to_string(),
             #[cfg(feature = "buildkit")]
-            version: bollard::image::BuilderVersion::BuilderBuildKit,
+            version: bollard::query_parameters::BuilderVersion::BuilderBuildKit,
             #[cfg(feature = "buildkit")]
             session: Some(image_name_with_tag.to_string()),
             ..Default::default()
         };
 
-        let mut build_stream =
-            self.docker
-                .build_image(build_options, None, Some(compressed.into()));
+        let mut build_stream = self.docker.build_image(
+            build_options,
+            None,
+            Some(Either::Left(Full::new(compressed.into()))),
+        );
 
         while let Some(log) = build_stream.next().await {
             match log {

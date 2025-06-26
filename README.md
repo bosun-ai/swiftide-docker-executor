@@ -22,6 +22,15 @@ let context = DefaultContext::from_executor(executor);
 let agent = Agent::builder().context(context).build();
 ```
 
+## Features
+
+* Execute swiftide tools in a docker container
+* Automagically works with local docker images, or roll your own and make sure the `swiftide-docker-service` is in the path
+* GRPC based communication
+* The service is published on docker hub, and can also be used in other contexts (i.e. kubernetes)
+* Indexing files streaming, remotely, into a Swiftide indexing pipeline
+* Opt-in buildkit for faster builds
+
 ## Loading files into a Swiftide indexing pipeline
 
 Additionally, the executor can be used to load files into a Swiftide indexing pipeline.

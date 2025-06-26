@@ -1,6 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
-use bollard::container::{Config, CreateContainerOptions, LogsOptions, StartContainerOptions};
+use bollard::{
+    query_parameters::{
+        CreateContainerOptions, InspectContainerOptions, LogsOptions, StartContainerOptions,
+    },
+    secret::ContainerCreateBody,
+};
 use swiftide_core::prelude::StreamExt as _;
 use uuid::Uuid;
 
@@ -19,7 +24,7 @@ impl ContainerStarter {
         &self,
         image_name: &str,
         container_uuid: &Uuid,
-        config: Config<String>,
+        config: ContainerCreateBody,
     ) -> Result<(String, String), ContainerStartError> {
         // Strip tag suffix from image name if present
         let image_name = if let Some(index) = image_name.find(':') {
@@ -33,7 +38,7 @@ impl ContainerStarter {
 
         let container_name = format!("{image_name}-{container_uuid}");
         let create_options = CreateContainerOptions {
-            name: container_name.as_str(),
+            name: Some(container_name),
             ..Default::default()
         };
 
@@ -47,7 +52,7 @@ impl ContainerStarter {
         tracing::info!("Created container with ID: {}", &container_id);
 
         self.docker
-            .start_container(&container_id, None::<StartContainerOptions<String>>)
+            .start_container(&container_id, None::<StartContainerOptions>)
             .await
             .map_err(ContainerStartError::Start)?;
 
@@ -67,7 +72,7 @@ impl ContainerStarter {
             .docker
             .logs(
                 container_id,
-                Some(LogsOptions::<&str> {
+                Some(LogsOptions {
                     stdout: true,
                     stderr: true,
                     since: 0,
@@ -109,7 +114,7 @@ impl ContainerStarter {
     async fn get_host_port(&self, container_id: &str) -> Result<String, ContainerStartError> {
         let container_info = self
             .docker
-            .inspect_container(container_id, None)
+            .inspect_container(container_id, None::<InspectContainerOptions>)
             .await
             .map_err(|e| ContainerStartError::PortMapping(e.to_string()))?;
 
