@@ -515,7 +515,7 @@ async fn test_invalid_dockerfile() {
         .unwrap_err();
 
     let DockerExecutorError::ImageBuild(err) = err else {
-        panic!("{:#}", err);
+        panic!("{err:#}");
     };
 
     assert!(err.to_string().contains("unknown instruction: SHOULD"));
