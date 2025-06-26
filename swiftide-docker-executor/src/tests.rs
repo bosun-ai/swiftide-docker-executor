@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use bollard::secret::ContainerStateStatusEnum;
+use bollard::{query_parameters::InspectContainerOptions, secret::ContainerStateStatusEnum};
 use swiftide_core::{indexing::Node, Command, Loader as _, ToolExecutor as _};
 use tokio_stream::StreamExt as _;
 
@@ -316,7 +316,10 @@ async fn test_assert_container_stopped_on_drop() {
     let container_id = executor.container_id.clone();
 
     // assert it started
-    let container = docker.inspect_container(&container_id, None).await.unwrap();
+    let container = docker
+        .inspect_container(&container_id, None::<InspectContainerOptions>)
+        .await
+        .unwrap();
     assert_eq!(
         container.state.as_ref().unwrap().status,
         Some(ContainerStateStatusEnum::RUNNING)
@@ -327,7 +330,10 @@ async fn test_assert_container_stopped_on_drop() {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // assert it stopped
-    let container = match docker.inspect_container(&container_id, None).await {
+    let container = match docker
+        .inspect_container(&container_id, None::<InspectContainerOptions>)
+        .await
+    {
         // If it's gone already we're good
         Err(e) if e.to_string().contains("No such container") => {
             return;

@@ -1,7 +1,8 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
-    container::{LogOutput, RemoveContainerOptions},
+    container::LogOutput,
+    query_parameters::{InspectContainerOptions, RemoveContainerOptions},
     secret::{ContainerState, ContainerStateStatusEnum},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
@@ -147,7 +148,7 @@ impl RunningDockerExecutor {
     pub async fn container_state(&self) -> Result<ContainerState, DockerExecutorError> {
         let container = self
             .docker
-            .inspect_container(&self.container_id, None)
+            .inspect_container(&self.container_id, None::<InspectContainerOptions>)
             .await?;
 
         container.state.ok_or_else(|| {
@@ -170,11 +171,11 @@ impl RunningDockerExecutor {
         let mut logs = Vec::new();
         let mut stream = self.docker.logs(
             &self.container_id,
-            Some(bollard::container::LogsOptions {
+            Some(bollard::query_parameters::LogsOptions {
                 follow: false,
                 stdout: true,
                 stderr: true,
-                tail: "all",
+                tail: "all".to_string(),
                 ..Default::default()
             }),
         );

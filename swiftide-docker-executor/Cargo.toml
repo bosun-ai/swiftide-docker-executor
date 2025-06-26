@@ -15,7 +15,7 @@ categories.workspace = true
 [dependencies]
 swiftide-core.workspace = true
 
-bollard = { version = "0.18.1" }
+bollard = { version = "0.19.1" }
 thiserror = "2.0"
 async-trait = "0.1"
 ignore = "0.4"
