@@ -18,6 +18,14 @@ tonic.workspace = true
 prost.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3" }
+futures-util.workspace = true
+
+swiftide-indexing = { workspace = true, optional = true }
+swiftide-core = { workspace = true, optional = true }
 
 [build-dependencies]
 tonic-build = { workspace = true }
+
+[features]
+default = ["file-loader"]
+file-loader = ["dep:swiftide-indexing", "dep:swiftide-core"]

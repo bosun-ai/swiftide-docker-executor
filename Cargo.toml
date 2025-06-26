@@ -8,6 +8,9 @@ prost = "0.13"
 tonic-build = "0.13"
 tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
+swiftide-core = "0.27"
+swiftide-indexing = "0.27"
+futures-util = "0.3"
 
 [workspace.package]
 description = "A docker executor for swiftide agent tools"

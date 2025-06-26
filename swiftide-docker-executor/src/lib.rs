@@ -33,6 +33,9 @@ mod errors;
 mod image_builder;
 mod running_docker_executor;
 
+#[cfg(feature = "file-loader")]
+pub mod file_loader;
+
 #[cfg(test)]
 mod tests;
 

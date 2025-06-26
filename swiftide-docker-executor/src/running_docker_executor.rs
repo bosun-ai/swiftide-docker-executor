@@ -4,7 +4,7 @@ use bollard::{
     container::{LogOutput, RemoveContainerOptions},
     secret::{ContainerState, ContainerStateStatusEnum},
 };
-use shell::shell_executor_client::ShellExecutorClient;
+use codegen::shell_executor_client::ShellExecutorClient;
 use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput};
@@ -16,7 +16,7 @@ use crate::{
     image_builder::ImageBuilder, ContextBuilder, ContextError, DockerExecutorError,
 };
 
-pub mod shell {
+pub mod codegen {
     tonic::include_proto!("shell");
 }
 
@@ -202,7 +202,7 @@ impl RunningDockerExecutor {
                 .await
                 .map_err(anyhow::Error::from)?;
 
-        let request = tonic::Request::new(shell::ShellRequest {
+        let request = tonic::Request::new(codegen::ShellRequest {
             command: cmd.to_string(),
         });
 
@@ -211,7 +211,7 @@ impl RunningDockerExecutor {
             .await
             .map_err(anyhow::Error::from)?;
 
-        let shell::ShellResponse {
+        let codegen::ShellResponse {
             stdout,
             stderr,
             exit_code,
