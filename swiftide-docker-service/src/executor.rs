@@ -39,7 +39,7 @@ impl ShellExecutor for MyShellExecutor {
             .spawn()
             .map_err(|e| {
                 tracing::error!(error = ?e, "Failed to start command");
-                Status::internal(format!("Failed to start command: {:?}", e))
+                Status::internal(format!("Failed to start command: {e:?}"))
             })?;
 
         // NOTE: Feels way overcomplicated just because we want both stderr and stdout
@@ -88,7 +88,7 @@ impl ShellExecutor for MyShellExecutor {
         // outputs stdout and stderr should be empty
         let output = child.wait_with_output().await.map_err(|e| {
             tracing::error!(error = ?e, "Failed to wait for command");
-            Status::internal(format!("Failed to wait for command: {:?}", e))
+            Status::internal(format!("Failed to wait for command: {e:?}"))
         })?;
 
         debug_assert!(stdout.is_empty());
