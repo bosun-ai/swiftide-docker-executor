@@ -44,7 +44,7 @@ impl Loader for FileLoader {
                 LoaderClient::connect(format!("http://127.0.0.1:{host_port}")).await
             })
         })
-        .expect("Failed to connect to Fluvio");
+        .expect("Failed to connect to service");
 
         let (tx, rx) = tokio::sync::mpsc::channel::<anyhow::Result<Node>>(1000);
 
