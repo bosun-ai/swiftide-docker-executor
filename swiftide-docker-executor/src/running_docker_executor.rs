@@ -8,7 +8,7 @@ use bollard::{
 use codegen::shell_executor_client::ShellExecutorClient;
 use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
-use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput};
+use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput, Loader as _};
 use uuid::Uuid;
 
 use crate::{
@@ -44,6 +44,18 @@ impl ToolExecutor for RunningDockerExecutor {
             Command::WriteFile(path, content) => self.write_file(path, content).await,
             _ => unimplemented!(),
         }
+    }
+
+    async fn stream_files(
+        &self,
+        path: &Path,
+        extensions: Option<Vec<String>>,
+    ) -> anyhow::Result<swiftide_core::indexing::IndexingStream> {
+        let extensions = extensions.unwrap_or_default();
+        Ok(self
+            .clone()
+            .into_file_loader(path, extensions)
+            .into_stream())
     }
 }
 

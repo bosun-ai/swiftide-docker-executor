@@ -41,12 +41,11 @@ tonic-build = { workspace = true }
 
 
 [dev-dependencies]
-swiftide-agents = "0.27"
+swiftide-agents = "0.28"
 test-log = { version = "0.2", features = ["trace"] }
 insta = { version = "1.42.1", features = ["filters"] }
 pretty_assertions = "1.4"
 
 [features]
-default = ["file-loader"]
-file-loader = []
+default = []
 buildkit = ["bollard/buildkit"]
