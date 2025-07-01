@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{borrow::Cow, path::PathBuf};
 
 use codegen::{loader_client::LoaderClient, LoadFilesRequest, NodeResponse};
 use swiftide_core::{indexing::Node, Loader};
@@ -11,32 +11,47 @@ pub mod codegen {
 }
 
 #[derive(Debug, Clone)]
-pub struct FileLoader {
+pub struct FileLoader<'a> {
     path: PathBuf,
     extensions: Vec<String>,
-    executor: RunningDockerExecutor,
+    executor: Cow<'a, RunningDockerExecutor>,
 }
 
 impl RunningDockerExecutor {
-    /// Creates a file loader from the executor. If needed it is safe to clone the executor.
+    /// Creates an owned file loader from the executor. If needed it is safe to clone the executor.
     ///
     /// The loader can be used with a swiftide indexing pipeline.
     pub fn into_file_loader<V: IntoIterator<Item = T>, T: Into<String>>(
         self,
         path: impl Into<PathBuf>,
         extensions: V,
-    ) -> FileLoader {
+    ) -> FileLoader<'static> {
         let path = path.into();
         let extensions = extensions.into_iter().map(Into::into).collect::<Vec<_>>();
         FileLoader {
             path,
             extensions,
-            executor: self,
+            executor: Cow::Owned(self),
+        }
+    }
+
+    /// Creates a borrowed file loader from the executor.
+    pub fn as_file_loader<'a, V: IntoIterator<Item = T>, T: Into<String>>(
+        &'a self,
+        path: impl Into<PathBuf>,
+        extensions: V,
+    ) -> FileLoader<'a> {
+        let path = path.into();
+        let extensions = extensions.into_iter().map(Into::into).collect::<Vec<_>>();
+        FileLoader {
+            path,
+            extensions,
+            executor: Cow::Borrowed(self),
         }
     }
 }
 
-impl Loader for FileLoader {
+impl Loader for FileLoader<'_> {
     fn into_stream(self) -> swiftide_core::indexing::IndexingStream {
         let host_port = &self.executor.host_port;
         let mut client = tokio::task::block_in_place(|| {
