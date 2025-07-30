@@ -8,13 +8,13 @@ use bollard::{
 use codegen::shell_executor_client::ShellExecutorClient;
 use std::{path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
-use swiftide_core::{prelude::StreamExt as _, Command, CommandError, CommandOutput, Loader as _};
+use swiftide_core::{Command, CommandError, CommandOutput, Loader as _, prelude::StreamExt as _};
 use uuid::Uuid;
 
 use crate::{
-    client::Client, container_configurator::ContainerConfigurator,
-    container_starter::ContainerStarter, dockerfile_manager::DockerfileManager,
-    image_builder::ImageBuilder, ContextBuilder, ContextError, DockerExecutorError,
+    ContextBuilder, ContextError, DockerExecutorError, client::Client,
+    container_configurator::ContainerConfigurator, container_starter::ContainerStarter,
+    dockerfile_manager::DockerfileManager, image_builder::ImageBuilder,
 };
 
 pub mod codegen {

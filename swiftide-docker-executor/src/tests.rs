@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use bollard::{query_parameters::InspectContainerOptions, secret::ContainerStateStatusEnum};
-use swiftide_core::{indexing::Node, Command, Loader as _, ToolExecutor as _};
+use swiftide_core::{Command, Loader as _, ToolExecutor as _, indexing::Node};
 use tokio_stream::StreamExt as _;
 
 use crate::{DockerExecutor, DockerExecutorError};
@@ -633,4 +633,55 @@ async fn test_loading_files() {
         files.iter().any(|node| node.path.ends_with("tests.rs")),
         "Expected to find tests.rs in loaded files"
     );
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_run_multiline_bash_script() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-multiline-bash")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let script = r#"
+        #!/usr/bin/env bash
+        echo "line1"
+        echo "line2"
+        echo "line3"
+    "#;
+
+    let output = executor.exec_cmd(&Command::shell(script)).await.unwrap();
+
+    let result = output.to_string();
+    assert!(result.contains("line1"));
+    assert!(result.contains("line2"));
+    assert!(result.contains("line3"));
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_run_python_script() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-python-script")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let script = r#"#!/usr/bin/env python3
+print("hello from python")
+print(1 + 2)"#;
+
+    let output = executor.exec_cmd(&Command::shell(script)).await;
+
+    dbg!(executor.logs().await.unwrap());
+    let output = output.unwrap();
+
+    let result = output.to_string();
+    assert!(result.contains("hello from python"));
+    assert!(result.contains("3"));
 }

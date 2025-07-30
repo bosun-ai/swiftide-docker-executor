@@ -9,7 +9,7 @@ use bollard::{
 use swiftide_core::prelude::StreamExt as _;
 use uuid::Uuid;
 
-use crate::{client::Client, ContainerStartError};
+use crate::{ContainerStartError, client::Client};
 
 pub struct ContainerStarter {
     docker: Arc<Client>,
