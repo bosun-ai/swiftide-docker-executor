@@ -6,13 +6,12 @@ use bollard::{
     secret::{ContainerState, ContainerStateStatusEnum},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{Command, CommandError, CommandOutput, Loader as _, prelude::StreamExt as _};
-use uuid::Uuid;
 
 use crate::{
-    ContextBuilder, ContextError, DockerExecutorError, client::Client,
+    ContextBuilder, ContextError, DockerExecutor, DockerExecutorError, client::Client,
     container_configurator::ContainerConfigurator, container_starter::ContainerStarter,
     dockerfile_manager::DockerfileManager, image_builder::ImageBuilder,
 };
@@ -26,6 +25,11 @@ pub struct RunningDockerExecutor {
     pub container_id: String,
     pub(crate) docker: Arc<Client>,
     pub host_port: String,
+
+    // Default environment configuration for the executor
+    pub(crate) env_clear: bool,
+    pub(crate) remove_env: Vec<String>,
+    pub(crate) env: HashMap<String, String>,
 }
 
 impl From<RunningDockerExecutor> for Arc<dyn ToolExecutor> {
@@ -59,18 +63,17 @@ impl ToolExecutor for RunningDockerExecutor {
 impl RunningDockerExecutor {
     /// Starts a docker container with a given context and image name
     pub async fn start(
-        container_uuid: Uuid,
-        context_path: &Path,
-        dockerfile: Option<&Path>,
-        image_name: &str,
-        user: Option<&str>,
+        builder: &DockerExecutor,
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
         let docker = Client::lazy_client().await?;
 
-        let mut image_name = image_name.to_string();
-
         // Any temporary dockrerfile created during the build process
         let mut tmp_dockerfile_name = None;
+        let mut image_name = builder.image_name.clone();
+        let dockerfile = &builder.dockerfile;
+        let context_path = &builder.context_path;
+        let user = builder.user.as_deref();
+        let container_uuid = builder.container_uuid;
 
         // Only build if a dockerfile is provided
         if let Some(dockerfile) = dockerfile {
@@ -138,6 +141,9 @@ impl RunningDockerExecutor {
             container_id,
             docker,
             host_port,
+            env_clear: builder.env_clear,
+            remove_env: builder.remove_env.clone(),
+            env: builder.env.clone(),
         };
 
         if let Some(tmp_dockerfile_name) = tmp_dockerfile_name {
@@ -214,6 +220,9 @@ impl RunningDockerExecutor {
 
         let request = tonic::Request::new(codegen::ShellRequest {
             command: cmd.to_string(),
+            env_clear: self.env_clear,
+            env_remove: self.remove_env.clone(),
+            envs: self.env.clone(),
         });
 
         let response = client
