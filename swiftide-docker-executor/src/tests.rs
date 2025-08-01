@@ -685,3 +685,86 @@ print(1 + 2)"#;
     assert!(result.contains("hello from python"));
     assert!(result.contains("3"));
 }
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_clear_env() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-no-env")
+        .clear_env()
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let output = executor
+        .exec_cmd(&Command::Shell("env".to_string()))
+        .await
+        .unwrap();
+
+    // Check that common host env vars are not present
+    let env_output = output.to_string();
+    dbg!(&env_output);
+    assert!(!env_output.contains("HOME="), "HOME env propagated");
+    assert!(!env_output.contains("HOSTNAME="), "HOSTNAME env propagated");
+    assert!(!env_output.contains("PATH="), "PATH env propagated");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_remove_env() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-no-env")
+        .remove_env("HOSTNAME")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let output = executor
+        .exec_cmd(&Command::Shell("env".to_string()))
+        .await
+        .unwrap();
+
+    // Check that common host env vars are not present
+    let env_output = output.to_string();
+    dbg!(&env_output);
+    dbg!(&executor.logs().await.unwrap());
+    assert!(!env_output.contains("HOSTNAME="), "HOST env propagated");
+    assert!(env_output.contains("HOME="), "HOME env not propagated");
+    assert!(env_output.contains("PATH="), "PATH env not propagated");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_add_env() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-no-env")
+        .with_env("TEST_ENV", "test_value")
+        .with_envs([("ANOTHER_ENV".to_string(), "another_value".to_string())])
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let output = executor
+        .exec_cmd(&Command::Shell("env".to_string()))
+        .await
+        .unwrap();
+
+    // Check that common host env vars are not present
+    let env_output = output.to_string();
+    dbg!(&env_output);
+    assert!(
+        env_output.contains("TEST_ENV=test_value"),
+        "TEST_ENV not set"
+    );
+    assert!(
+        env_output.contains("ANOTHER_ENV=another_value"),
+        "ANOTHER_ENV not set"
+    );
+    assert!(env_output.contains("HOME="), "HOME env not propagated");
+}

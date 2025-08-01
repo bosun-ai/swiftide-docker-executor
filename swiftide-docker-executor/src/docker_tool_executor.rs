@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 use uuid::Uuid;
 
 use crate::{DockerExecutorError, RunningDockerExecutor};
@@ -6,11 +6,14 @@ use crate::{DockerExecutorError, RunningDockerExecutor};
 /// Build a docker image with bollard and start it up
 #[derive(Clone, Debug)]
 pub struct DockerExecutor {
-    context_path: PathBuf,
-    image_name: String,
-    dockerfile: Option<PathBuf>,
-    container_uuid: Uuid,
-    user: Option<String>,
+    pub(crate) context_path: PathBuf,
+    pub(crate) image_name: String,
+    pub(crate) dockerfile: Option<PathBuf>,
+    pub(crate) container_uuid: Uuid,
+    pub(crate) user: Option<String>,
+    pub(crate) env_clear: bool,
+    pub(crate) remove_env: Vec<String>,
+    pub(crate) env: HashMap<String, String>,
 }
 
 impl Default for DockerExecutor {
@@ -21,6 +24,9 @@ impl Default for DockerExecutor {
             image_name: "docker-executor".into(),
             dockerfile: Some("Dockerfile".into()),
             user: None,
+            env: HashMap::new(),
+            env_clear: false,
+            remove_env: vec![],
         }
     }
 }
@@ -29,6 +35,34 @@ impl DockerExecutor {
     /// Set the path to build the context from (default ".")
     pub fn with_context_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.context_path = path.into();
+
+        self
+    }
+
+    /// Clear the environment variables before starting the service in the container
+    pub fn clear_env(&mut self) -> &mut Self {
+        self.env_clear = true;
+
+        self
+    }
+
+    /// Remove an environment variable from the service in the container
+    pub fn remove_env(&mut self, env: impl Into<String>) -> &mut Self {
+        self.remove_env.push(env.into());
+
+        self
+    }
+
+    /// Set an environment variable for the service in the container
+    pub fn with_env(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
+        self.env.insert(key.into(), value.into());
+
+        self
+    }
+
+    /// Set multiple environment variables for the service in the container
+    pub fn with_envs(&mut self, envs: impl Into<HashMap<String, String>>) -> &mut Self {
+        self.env.extend(envs.into());
 
         self
     }
@@ -75,13 +109,6 @@ impl DockerExecutor {
     ///
     /// Note that on dropping the `RunningDockerExecutor`, the container will be stopped
     pub async fn start(self) -> Result<RunningDockerExecutor, DockerExecutorError> {
-        RunningDockerExecutor::start(
-            self.container_uuid,
-            &self.context_path,
-            self.dockerfile.as_deref(),
-            &self.image_name,
-            self.user.as_deref(),
-        )
-        .await
+        RunningDockerExecutor::start(&self).await
     }
 }

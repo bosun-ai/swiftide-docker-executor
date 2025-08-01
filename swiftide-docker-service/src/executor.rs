@@ -25,7 +25,12 @@ impl ShellExecutor for MyShellExecutor {
         &self,
         request: Request<ShellRequest>,
     ) -> Result<Response<ShellResponse>, Status> {
-        let ShellRequest { command } = request.into_inner();
+        let ShellRequest {
+            command,
+            env_clear,
+            env_remove,
+            envs,
+        } = request.into_inner();
 
         tracing::info!(command, "Received command");
 
@@ -36,7 +41,24 @@ impl ShellExecutor for MyShellExecutor {
             let interpreter = first_line.trim_start_matches("#!/usr/bin/env ").trim();
             tracing::info!(interpreter, "detected shebang; running as script");
 
-            let mut child = Command::new(interpreter)
+            let mut cmd = Command::new(interpreter);
+
+            if env_clear {
+                tracing::info!("clearing environment variables");
+                cmd.env_clear();
+            }
+
+            for var in env_remove {
+                tracing::info!(var, "clearing environment variable");
+                cmd.env_remove(var);
+            }
+
+            for (key, value) in envs {
+                tracing::info!(key, "setting environment variable");
+                cmd.env(key, value);
+            }
+
+            let mut child = cmd
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -51,9 +73,24 @@ impl ShellExecutor for MyShellExecutor {
         } else {
             tracing::info!("no shebang detected; running as command");
 
+            let mut cmd = Command::new("sh");
+
+            if env_clear {
+                tracing::info!("clearing environment variables");
+                cmd.env_clear();
+            }
+
+            for var in env_remove {
+                tracing::info!(var, "clearing environment variable");
+                cmd.env_remove(var);
+            }
+
+            for (key, value) in envs {
+                tracing::info!(key, "setting environment variable");
+                cmd.env(key, value);
+            }
             // Treat as shell command
-            Command::new("sh")
-                .arg("-c")
+            cmd.arg("-c")
                 .arg(&command)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())

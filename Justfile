@@ -6,6 +6,6 @@ docker-build-service:
 docker-run-service: docker-build-service
   docker run -p 50051:50051 bosunai/swiftide-docker-service:{{version}} swiftide-docker-service
 
-test: docker-build-service
-  RUST_LOG=swiftide_docker_executor=debug cargo nextest run --no-fail-fast
+test *args: docker-build-service
+  RUST_LOG=swiftide_docker_executor=debug cargo nextest run {{args}} --no-fail-fast
 
