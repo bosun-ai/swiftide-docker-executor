@@ -1,6 +1,6 @@
 use std::process::Stdio;
 
-use tokio::io::AsyncBufReadExt as _;
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
 use tokio::process::Command;
 use tokio::task::JoinSet;
 use tonic::{Request, Response, Status};
@@ -29,18 +29,42 @@ impl ShellExecutor for MyShellExecutor {
 
         tracing::info!(command, "Received command");
 
+        let lines: Vec<&str> = command.lines().collect();
+        let mut child = if let Some(first_line) = lines.first()
+            && first_line.starts_with("#!")
+        {
+            let interpreter = first_line.trim_start_matches("#!/usr/bin/env ").trim();
+            tracing::info!(interpreter, "detected shebang; running as script");
+
+            let mut child = Command::new(interpreter)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
+
+            if let Some(mut stdin) = child.stdin.take() {
+                let body = lines[1..].join("\n");
+                stdin.write_all(body.as_bytes()).await?;
+            }
+
+            child
+        } else {
+            tracing::info!("no shebang detected; running as command");
+
+            // Treat as shell command
+            Command::new("sh")
+                .arg("-c")
+                .arg(&command)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| {
+                    tracing::error!(error = ?e, "Failed to start command");
+                    Status::internal(format!("Failed to start command: {e:?}"))
+                })?
+        };
         // Run the command in a shell
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(&command)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                tracing::error!(error = ?e, "Failed to start command");
-                Status::internal(format!("Failed to start command: {e:?}"))
-            })?;
 
         // NOTE: Feels way overcomplicated just because we want both stderr and stdout
         let mut joinset = JoinSet::new();

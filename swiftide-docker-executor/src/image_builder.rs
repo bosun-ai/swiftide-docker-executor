@@ -7,7 +7,7 @@ use bollard::secret::BuildInfoAux;
 use http_body_util::{Either, Full};
 use swiftide_core::prelude::StreamExt as _;
 
-use crate::{client::Client, ImageBuildError};
+use crate::{ImageBuildError, client::Client};
 
 pub struct ImageBuilder {
     docker: Arc<Client>,

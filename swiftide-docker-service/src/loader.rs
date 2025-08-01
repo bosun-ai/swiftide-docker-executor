@@ -1,8 +1,8 @@
 use std::pin::Pin;
 
 use futures_util::{Stream, StreamExt as _, TryStreamExt};
-use swiftide_core::indexing::Node;
 use swiftide_core::Loader as _;
+use swiftide_core::indexing::Node;
 use swiftide_indexing::loaders::FileLoader;
 use tonic::Status;
 

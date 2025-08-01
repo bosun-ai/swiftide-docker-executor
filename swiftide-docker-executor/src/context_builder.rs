@@ -211,7 +211,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
-    use tempfile::{tempdir, NamedTempFile};
+    use tempfile::{NamedTempFile, tempdir};
 
     #[test_log::test(tokio::test)]
     async fn test_is_ignored() {

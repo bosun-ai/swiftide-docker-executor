@@ -1,7 +1,7 @@
 use std::{borrow::Cow, path::PathBuf};
 
-use codegen::{loader_client::LoaderClient, LoadFilesRequest, NodeResponse};
-use swiftide_core::{indexing::Node, Loader};
+use codegen::{LoadFilesRequest, NodeResponse, loader_client::LoaderClient};
+use swiftide_core::{Loader, indexing::Node};
 use tokio::runtime::Handle;
 
 use crate::RunningDockerExecutor;

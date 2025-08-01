@@ -1,4 +1,4 @@
-use executor::{codegen::shell_executor_server::ShellExecutorServer, MyShellExecutor};
+use executor::{MyShellExecutor, codegen::shell_executor_server::ShellExecutorServer};
 use tonic::transport::Server;
 
 mod executor;
@@ -20,8 +20,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(feature = "file-loader")]
     {
-        use loader::codegen::loader_server::LoaderServer;
         use loader::MyLoaderExecutor;
+        use loader::codegen::loader_server::LoaderServer;
 
         tracing::warn!("FileLoader gRPC server listening on {}", addr);
         builder = builder.add_service(LoaderServer::new(MyLoaderExecutor));
