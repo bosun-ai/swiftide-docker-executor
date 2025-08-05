@@ -306,6 +306,10 @@ impl Drop for RunningDockerExecutor {
                     .await
             })
         });
+        tracing::debug!(
+            "Container stopped {container_id}",
+            container_id = self.container_id
+        );
 
         if let Err(e) = result {
             tracing::warn!(error = %e, "Error stopping container, might not be stopped");

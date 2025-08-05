@@ -36,6 +36,7 @@ impl ImageBuilder {
             t: Some(image_name_with_tag.clone()),
             rm: true,
             dockerfile: dockerfile.to_string(),
+            pull: Some("true".to_string()),
             #[cfg(feature = "buildkit")]
             version: bollard::query_parameters::BuilderVersion::BuilderBuildKit,
             #[cfg(feature = "buildkit")]
