@@ -25,6 +25,7 @@ pub struct RunningDockerExecutor {
     pub container_id: String,
     pub(crate) docker: Arc<Client>,
     pub host_port: String,
+    dropped: bool,
 
     // Default environment configuration for the executor
     pub(crate) env_clear: bool,
@@ -144,6 +145,7 @@ impl RunningDockerExecutor {
             env_clear: builder.env_clear,
             remove_env: builder.remove_env.clone(),
             env: builder.env.clone(),
+            dropped: false,
         };
 
         if let Some(tmp_dockerfile_name) = tmp_dockerfile_name {
@@ -288,41 +290,53 @@ impl RunningDockerExecutor {
 
 impl Drop for RunningDockerExecutor {
     fn drop(&mut self) {
+        if self.dropped {
+            tracing::debug!(
+                "Executor already dropped; skipping stop and remove for container {}",
+                self.container_id
+            );
+            return;
+        }
+        self.dropped = true;
+
         tracing::warn!(
             "Dropped; stopping and removing container {container_id}",
             container_id = self.container_id
         );
         let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                tracing::debug!(
-                    "Stopping container {container_id}",
-                    container_id = self.container_id
-                );
-                self.docker
-                    .stop_container(
-                        &self.container_id,
-                        Some(StopContainerOptions {
-                            signal: Some("SIGTERM".to_string()),
-                            t: Some(5),
-                        }),
-                    )
-                    .await?;
+            tokio::runtime::Handle::current().block_on(tokio::time::timeout(
+                tokio::time::Duration::from_secs(5),
+                async {
+                    tracing::debug!(
+                        "Stopping container {container_id}",
+                        container_id = self.container_id
+                    );
+                    self.docker
+                        .stop_container(
+                            &self.container_id,
+                            Some(StopContainerOptions {
+                                signal: Some("SIGTERM".to_string()),
+                                t: Some(5),
+                            }),
+                        )
+                        .await?;
 
-                tracing::debug!(
-                    "Removing container {container_id}",
-                    container_id = self.container_id
-                );
-                self.docker
-                    .remove_container(
-                        &self.container_id,
-                        Some(RemoveContainerOptions {
-                            force: true,
-                            v: true,
-                            ..Default::default()
-                        }),
-                    )
-                    .await
-            })
+                    tracing::debug!(
+                        "Removing container {container_id}",
+                        container_id = self.container_id
+                    );
+                    self.docker
+                        .remove_container(
+                            &self.container_id,
+                            Some(RemoveContainerOptions {
+                                force: true,
+                                v: true,
+                                ..Default::default()
+                            }),
+                        )
+                        .await
+                },
+            ))
         });
         tracing::debug!(
             "Container stopped {container_id}",
