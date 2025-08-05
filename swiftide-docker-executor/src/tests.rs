@@ -10,6 +10,7 @@ use crate::{DockerExecutor, DockerExecutorError};
 // A much smaller busybox image for faster tests
 const TEST_DOCKERFILE: &str = "Dockerfile.tests";
 const TEST_DOCKERFILE_ALPINE: &str = "Dockerfile.alpine.tests";
+const TEST_DOCKERFILE_ENTRYPOINT: &str = "Dockerfile.entrypoint.tests";
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_runs_docker_and_echos() {
@@ -307,6 +308,62 @@ async fn test_assert_container_stopped_on_drop() {
         .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
         .with_image_name("test-drop")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let docker = executor.docker.clone();
+    let container_id = executor.container_id.clone();
+
+    // assert it started
+    let container = docker
+        .inspect_container(&container_id, None::<InspectContainerOptions>)
+        .await
+        .unwrap();
+    assert_eq!(
+        container.state.as_ref().unwrap().status,
+        Some(ContainerStateStatusEnum::RUNNING)
+    );
+
+    // Send a command to the container so that it's doing something
+    let result = executor
+        .exec_cmd(&Command::shell("echo 'hello'"))
+        .await
+        .unwrap();
+    assert_eq!(result.to_string(), "hello");
+
+    drop(executor);
+
+    // tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // assert it stopped
+    let container = match docker
+        .inspect_container(&container_id, None::<InspectContainerOptions>)
+        .await
+    {
+        // If it's gone already we're good
+        Err(e) if e.to_string().contains("No such container") => {
+            return;
+        }
+        Ok(container) => container,
+        Err(e) => panic!("Error inspecting container: {e}"),
+    };
+    let status = container.state.as_ref().unwrap().status;
+    assert!(
+        status == Some(ContainerStateStatusEnum::REMOVING)
+            || status == Some(ContainerStateStatusEnum::EXITED)
+            || status == Some(ContainerStateStatusEnum::DEAD),
+        "Unexpected container state: {status:?}"
+    );
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_assert_container_stopped_on_drop_entrypoint() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE_ENTRYPOINT)
+        .with_context_path(".")
+        .with_image_name("test-drop-entrypoint")
         .to_owned()
         .start()
         .await

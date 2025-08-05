@@ -15,7 +15,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let addr = "0.0.0.0:50051".parse()?;
 
-    tracing::warn!("ShellExecutor gRPC server listening on {}", addr);
+    let version = env!("CARGO_PKG_VERSION");
+    tracing::warn!("ShellExecutor {version} gRPC server listening on {}", addr);
 
     let mut builder = Server::builder().add_service(ShellExecutorServer::new(MyShellExecutor));
 

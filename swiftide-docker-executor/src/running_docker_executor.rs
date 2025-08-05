@@ -303,17 +303,21 @@ impl Drop for RunningDockerExecutor {
             "Dropped; stopping and removing container {container_id}",
             container_id = self.container_id
         );
-        let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(tokio::time::timeout(
+        let docker = self.docker.clone();
+        let container_id = self.container_id.clone();
+
+        let result = tokio::task::block_in_place(move || {
+            let handle = tokio::runtime::Handle::current();
+            handle.block_on(tokio::time::timeout(
                 tokio::time::Duration::from_secs(5),
                 async {
                     tracing::debug!(
                         "Stopping container {container_id}",
-                        container_id = self.container_id
+                        container_id = container_id
                     );
-                    self.docker
+                    docker
                         .stop_container(
-                            &self.container_id,
+                            &container_id,
                             Some(StopContainerOptions {
                                 signal: Some("SIGTERM".to_string()),
                                 t: Some(5),
@@ -323,11 +327,11 @@ impl Drop for RunningDockerExecutor {
 
                     tracing::debug!(
                         "Removing container {container_id}",
-                        container_id = self.container_id
+                        container_id = container_id
                     );
-                    self.docker
+                    docker
                         .remove_container(
-                            &self.container_id,
+                            &container_id,
                             Some(RemoveContainerOptions {
                                 force: true,
                                 v: true,

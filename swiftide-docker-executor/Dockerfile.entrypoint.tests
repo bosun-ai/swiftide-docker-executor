@@ -1,0 +1,15 @@
+# A lightweight image used for tests with an entrypoint script
+FROM rust:1.87-slim
+
+# Just install git
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  git python3 \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY . /app
+
+WORKDIR /app/
+
+ENTRYPOINT ["exec", "/bin/bash", "--login", "-c", '"$*"']
+

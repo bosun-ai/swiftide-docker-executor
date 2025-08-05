@@ -68,20 +68,17 @@ impl ContainerStarter {
         // forward logs, up to 10s
         let mut count = 0;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        while let Some(log) = self
-            .docker
-            .logs(
-                container_id,
-                Some(LogsOptions {
-                    stdout: true,
-                    stderr: true,
-                    since: 0,
-                    ..Default::default()
-                }),
-            )
-            .next()
-            .await
-        {
+        let mut stream = self.docker.logs(
+            container_id,
+            Some(LogsOptions {
+                stdout: true,
+                stderr: true,
+                since: 0,
+                ..Default::default()
+            }),
+        );
+
+        while let Some(log) = stream.next().await {
             if count > 100 {
                 tracing::warn!("Waited 10 seconds for container to start; assuming it did");
                 break;

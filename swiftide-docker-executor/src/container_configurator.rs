@@ -33,7 +33,6 @@ impl ContainerConfigurator {
             image: Some(image_name.to_string()),
             cmd: Some(vec!["swiftide-docker-service".to_string()]),
             tty: Some(true),
-            entrypoint: Some(vec!["".to_string()]),
             user: user.map(|u| u.to_string()),
             exposed_ports: Some(exposed_ports),
             host_config: Some(bollard::models::HostConfig {
