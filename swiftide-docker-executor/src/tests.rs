@@ -325,9 +325,16 @@ async fn test_assert_container_stopped_on_drop() {
         Some(ContainerStateStatusEnum::RUNNING)
     );
 
+    // Send a command to the container so that it's doing something
+    let result = executor
+        .exec_cmd(&Command::shell("echo 'hello'"))
+        .await
+        .unwrap();
+    assert_eq!(result.to_string(), "hello");
+
     drop(executor);
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // assert it stopped
     let container = match docker

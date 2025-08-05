@@ -1,4 +1,5 @@
 use executor::{MyShellExecutor, codegen::shell_executor_server::ShellExecutorServer};
+use tokio::signal::unix::{SignalKind, signal};
 use tonic::transport::Server;
 
 mod executor;
@@ -27,7 +28,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder = builder.add_service(LoaderServer::new(MyLoaderExecutor));
     }
 
-    builder.serve(addr).await?;
+    builder.serve_with_shutdown(addr, sigterm()).await?;
 
     Ok(())
+}
+
+async fn sigterm() {
+    let _ = signal(SignalKind::terminate())
+        .expect("failed to create a new SIGINT signal handler for gRPC")
+        .recv()
+        .await;
+
+    tracing::warn!("Received SIGTERM, shutting down gracefully...");
 }

@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
     container::LogOutput,
-    query_parameters::{InspectContainerOptions, RemoveContainerOptions},
+    query_parameters::{InspectContainerOptions, RemoveContainerOptions, StopContainerOptions},
     secret::{ContainerState, ContainerStateStatusEnum},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
@@ -289,11 +289,29 @@ impl RunningDockerExecutor {
 impl Drop for RunningDockerExecutor {
     fn drop(&mut self) {
         tracing::warn!(
-            "Stopping container {container_id}",
+            "Dropped; stopping and removing container {container_id}",
             container_id = self.container_id
         );
         let result = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
+                tracing::debug!(
+                    "Stopping container {container_id}",
+                    container_id = self.container_id
+                );
+                self.docker
+                    .stop_container(
+                        &self.container_id,
+                        Some(StopContainerOptions {
+                            signal: Some("SIGTERM".to_string()),
+                            t: Some(5),
+                        }),
+                    )
+                    .await?;
+
+                tracing::debug!(
+                    "Removing container {container_id}",
+                    container_id = self.container_id
+                );
                 self.docker
                     .remove_container(
                         &self.container_id,
