@@ -359,6 +359,55 @@ async fn test_assert_container_stopped_on_drop() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_assert_container_retain_on_drop() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-drop")
+        .retain_on_drop(true)
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let docker = executor.docker.clone();
+    let container_id = executor.container_id.clone();
+
+    // assert it started
+    let container = docker
+        .inspect_container(&container_id, None::<InspectContainerOptions>)
+        .await
+        .unwrap();
+    assert_eq!(
+        container.state.as_ref().unwrap().status,
+        Some(ContainerStateStatusEnum::RUNNING)
+    );
+
+    // Send a command to the container so that it's doing something
+    let result = executor
+        .exec_cmd(&Command::shell("echo 'hello'"))
+        .await
+        .unwrap();
+    assert_eq!(result.to_string(), "hello");
+    let container_id = executor.container_id.clone();
+
+    drop(executor);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // assert it stopped
+    let container = match docker
+        .inspect_container(&container_id, None::<InspectContainerOptions>)
+        .await
+    {
+        Ok(container) => container,
+        Err(e) => panic!("Error inspecting container: {e}"),
+    };
+    let status = container.state.as_ref().unwrap().status;
+    assert_eq!(status, Some(ContainerStateStatusEnum::RUNNING));
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_assert_container_stopped_on_drop_entrypoint() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE_ENTRYPOINT)

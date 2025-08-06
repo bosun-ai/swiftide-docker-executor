@@ -14,6 +14,7 @@ pub struct DockerExecutor {
     pub(crate) env_clear: bool,
     pub(crate) remove_env: Vec<String>,
     pub(crate) env: HashMap<String, String>,
+    pub(crate) retain_on_drop: bool,
 }
 
 impl Default for DockerExecutor {
@@ -27,6 +28,7 @@ impl Default for DockerExecutor {
             env: HashMap::new(),
             env_clear: false,
             remove_env: vec![],
+            retain_on_drop: false,
         }
     }
 }
@@ -35,6 +37,13 @@ impl DockerExecutor {
     /// Set the path to build the context from (default ".")
     pub fn with_context_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.context_path = path.into();
+
+        self
+    }
+
+    /// Instead of killing the container on drop, retain it for inspection. Default is false.
+    pub fn retain_on_drop(&mut self, retain: bool) -> &mut Self {
+        self.retain_on_drop = retain;
 
         self
     }

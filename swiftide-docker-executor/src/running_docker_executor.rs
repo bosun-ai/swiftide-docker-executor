@@ -2,9 +2,7 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
     container::LogOutput,
-    query_parameters::{
-        InspectContainerOptions, KillContainerOptions, RemoveContainerOptions, StopContainerOptions,
-    },
+    query_parameters::{InspectContainerOptions, KillContainerOptions, RemoveContainerOptions},
     secret::{ContainerState, ContainerStateStatusEnum},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
@@ -28,6 +26,7 @@ pub struct RunningDockerExecutor {
     pub(crate) docker: Arc<Client>,
     pub host_port: String,
     dropped: bool,
+    retain_on_drop: bool,
 
     // Default environment configuration for the executor
     pub(crate) env_clear: bool,
@@ -148,6 +147,7 @@ impl RunningDockerExecutor {
             remove_env: builder.remove_env.clone(),
             env: builder.env.clone(),
             dropped: false,
+            retain_on_drop: builder.retain_on_drop,
         };
 
         if let Some(tmp_dockerfile_name) = tmp_dockerfile_name {
@@ -295,6 +295,13 @@ impl Drop for RunningDockerExecutor {
         if self.dropped {
             tracing::debug!(
                 "Executor already dropped; skipping stop and remove for container {}",
+                self.container_id
+            );
+            return;
+        }
+        if self.retain_on_drop {
+            tracing::debug!(
+                "Retaining container {} on drop; not stopping or removing",
                 self.container_id
             );
             return;
