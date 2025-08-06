@@ -23,7 +23,7 @@ pub struct Client {
 }
 
 impl Client {
-    fn new() -> Result<Self, ClientError> {
+    pub(crate) fn new() -> Result<Self, ClientError> {
         let socket_path = get_socket_path();
         let bollard_client =
             bollard::Docker::connect_with_socket(&socket_path, 600, bollard::API_DEFAULT_VERSION)

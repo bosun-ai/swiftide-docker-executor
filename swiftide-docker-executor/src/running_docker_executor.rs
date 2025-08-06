@@ -2,7 +2,9 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
     container::LogOutput,
-    query_parameters::{InspectContainerOptions, RemoveContainerOptions, StopContainerOptions},
+    query_parameters::{
+        InspectContainerOptions, KillContainerOptions, RemoveContainerOptions, StopContainerOptions,
+    },
     secret::{ContainerState, ContainerStateStatusEnum},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
@@ -303,6 +305,7 @@ impl Drop for RunningDockerExecutor {
             "Dropped; stopping and removing container {container_id}",
             container_id = self.container_id
         );
+
         let docker = self.docker.clone();
         let container_id = self.container_id.clone();
 
@@ -315,15 +318,14 @@ impl Drop for RunningDockerExecutor {
                         "Stopping container {container_id}",
                         container_id = container_id
                     );
-                    docker
-                        .stop_container(
+                    let _ = docker
+                        .kill_container(
                             &container_id,
-                            Some(StopContainerOptions {
-                                signal: Some("SIGTERM".to_string()),
-                                t: Some(5),
+                            Some(KillContainerOptions {
+                                signal: "SIGTERM".to_string(),
                             }),
                         )
-                        .await?;
+                        .await;
 
                     tracing::debug!(
                         "Removing container {container_id}",
