@@ -333,9 +333,7 @@ async fn test_assert_container_stopped_on_drop() {
         .unwrap();
     assert_eq!(result.to_string(), "hello");
 
-    drop(executor);
-
-    // tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let _ = executor.shutdown().await;
 
     // assert it stopped
     let container = match docker
@@ -438,9 +436,7 @@ async fn test_assert_container_stopped_on_drop_entrypoint() {
         .unwrap();
     assert_eq!(result.to_string(), "hello");
 
-    drop(executor);
-
-    // tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let _ = executor.shutdown().await;
 
     // assert it stopped
     let container = match docker

@@ -405,16 +405,15 @@ impl Drop for RunningDockerExecutor {
             return;
         }
         self.dropped = true;
+        self.cancel_token.cancel();
 
+        let this = self.clone();
         let container_id = self.container_id.clone();
-        let result = tokio::task::block_in_place(move || {
+
+        tokio::task::spawn_blocking(move || {
             let handle = tokio::runtime::Handle::current();
-            handle.block_on(async { self.shutdown().await })
+            handle.block_on(async move { this.shutdown().await })
         });
         tracing::debug!("Container stopped {container_id}");
-
-        if let Err(e) = result {
-            tracing::warn!(error = %e, "Error stopping container, might not be stopped");
-        }
     }
 }
