@@ -1,7 +1,6 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
-    container::LogOutput,
     query_parameters::{InspectContainerOptions, KillContainerOptions, RemoveContainerOptions},
     secret::{ContainerState, ContainerStateStatusEnum},
 };
@@ -22,6 +21,7 @@ use crate::{
 pub mod codegen {
     tonic::include_proto!("shell");
 }
+pub use bollard::container::LogOutput;
 
 #[derive(Clone, Debug)]
 pub struct RunningDockerExecutor {
