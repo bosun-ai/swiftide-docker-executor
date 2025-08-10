@@ -52,13 +52,12 @@ pub async fn mangle(path: &Path) -> Result<MangledDockerfile, MangleError> {
     if let Some(last_from) = lines
         .iter()
         .rfind(|line| line.trim_start().to_lowercase().starts_with("from"))
+        && last_from.to_lowercase().contains("alpine")
     {
-        if last_from.to_lowercase().contains("alpine") {
-            lines.insert(
-                insert_pos.saturating_add(1),
-                "RUN apk add --no-cache gcompat libgcc pcre2 ripgrep fd",
-            );
-        }
+        lines.insert(
+            insert_pos.saturating_add(1),
+            "RUN apk add --no-cache gcompat libgcc pcre2 ripgrep fd",
+        );
     }
 
     let new_dockerfile = lines.join("\n");

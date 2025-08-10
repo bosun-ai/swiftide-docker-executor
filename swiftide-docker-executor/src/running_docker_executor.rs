@@ -6,6 +6,7 @@ use bollard::{
     secret::{ContainerState, ContainerStateStatusEnum},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
+use futures_util::{Stream, stream::unfold};
 use std::{collections::HashMap, path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{Command, CommandError, CommandOutput, Loader as _, prelude::StreamExt as _};
@@ -216,6 +217,30 @@ impl RunningDockerExecutor {
         Ok(logs)
     }
 
+    pub async fn logs_stream(&self) -> Result<impl Stream<Item = String>, DockerExecutorError> {
+        let stream = self.docker.logs(
+            &self.container_id,
+            Some(bollard::query_parameters::LogsOptions {
+                follow: true,
+                stdout: true,
+                stderr: true,
+                tail: "all".to_string(),
+                ..Default::default()
+            }),
+        );
+
+        Ok(unfold(stream, |mut stream| async move {
+            match stream.next().await {
+                Some(Ok(LogOutput::Console { message }))
+                | Some(Ok(LogOutput::StdOut { message }))
+                | Some(Ok(LogOutput::StdErr { message })) => {
+                    Some((String::from_utf8_lossy(&message).trim().to_string(), stream))
+                }
+                _ => None,
+            }
+        }))
+    }
+
     async fn exec_shell(&self, cmd: &str) -> Result<CommandOutput, CommandError> {
         let mut client =
             ShellExecutorClient::connect(format!("http://127.0.0.1:{}", self.host_port))
@@ -269,21 +294,20 @@ impl RunningDockerExecutor {
         let write_file_result = self.exec_shell(&cmd).await;
 
         // If the directory or file does not exist, create it
-        if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result {
-            if [
+        if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result
+            && [
                 "no such file or directory",
                 "directory nonexistent",
                 "nonexistent directory",
             ]
             .iter()
             .any(|&s| write_file.output.to_lowercase().contains(s))
-            {
-                let path = path.parent().context("No parent directory")?;
-                let mkdircmd = format!("mkdir -p {}", path.display());
-                let _ = self.exec_shell(&mkdircmd).await?;
+        {
+            let path = path.parent().context("No parent directory")?;
+            let mkdircmd = format!("mkdir -p {}", path.display());
+            let _ = self.exec_shell(&mkdircmd).await?;
 
-                return self.exec_shell(&cmd).await;
-            }
+            return self.exec_shell(&cmd).await;
         }
 
         write_file_result

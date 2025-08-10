@@ -72,17 +72,16 @@ impl ContextBuilder {
             return false;
         }
 
-        if let Some(global) = &self.global {
-            if global
+        if let Some(global) = &self.global
+            && global
                 .matched_path_or_any_parents(relative_path, false)
                 .is_ignore()
-            {
-                tracing::debug!(
-                    "ignoring {path} as it is ignored by global gitignore",
-                    path = path.as_ref().display()
-                );
-                return true;
-            }
+        {
+            tracing::debug!(
+                "ignoring {path} as it is ignored by global gitignore",
+                path = path.as_ref().display()
+            );
+            return true;
         }
 
         self.ignore

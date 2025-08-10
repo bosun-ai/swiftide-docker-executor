@@ -2492,6 +2492,7 @@ dependencies = [
  "dirs",
  "flate2",
  "fs-err",
+ "futures-util",
  "http-body-util",
  "ignore",
  "indoc",
