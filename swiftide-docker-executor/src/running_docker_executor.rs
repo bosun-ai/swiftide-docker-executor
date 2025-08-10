@@ -6,10 +6,12 @@ use bollard::{
     secret::{ContainerState, ContainerStateStatusEnum},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
-use futures_util::{Stream, stream::unfold};
+use futures_util::Stream;
 use std::{collections::HashMap, path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{Command, CommandError, CommandOutput, Loader as _, prelude::StreamExt as _};
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     ContextBuilder, ContextError, DockerExecutor, DockerExecutorError, client::Client,
@@ -33,6 +35,9 @@ pub struct RunningDockerExecutor {
     pub(crate) env_clear: bool,
     pub(crate) remove_env: Vec<String>,
     pub(crate) env: HashMap<String, String>,
+
+    /// Cancellation token to stop anything polling the docker api
+    cancel_token: Arc<CancellationToken>,
 }
 
 impl From<RunningDockerExecutor> for Arc<dyn ToolExecutor> {
@@ -149,6 +154,7 @@ impl RunningDockerExecutor {
             env: builder.env.clone(),
             dropped: false,
             retain_on_drop: builder.retain_on_drop,
+            cancel_token: Arc::new(CancellationToken::new()),
         };
 
         if let Some(tmp_dockerfile_name) = tmp_dockerfile_name {
@@ -217,28 +223,51 @@ impl RunningDockerExecutor {
         Ok(logs)
     }
 
-    pub async fn logs_stream(&self) -> Result<impl Stream<Item = String>, DockerExecutorError> {
-        let stream = self.docker.logs(
-            &self.container_id,
-            Some(bollard::query_parameters::LogsOptions {
-                follow: true,
-                stdout: true,
-                stderr: true,
-                tail: "all".to_string(),
-                ..Default::default()
-            }),
-        );
+    /// Streams the logs of the container as raw `bollard::container::LogOutput` items.
+    pub async fn logs_stream(
+        &self,
+    ) -> impl Stream<Item = Result<LogOutput, bollard::errors::Error>> {
+        let docker = self.docker.clone();
+        let container_id = self.container_id.clone();
+        let cancel = self.cancel_token.clone();
 
-        Ok(unfold(stream, |mut stream| async move {
-            match stream.next().await {
-                Some(Ok(LogOutput::Console { message }))
-                | Some(Ok(LogOutput::StdOut { message }))
-                | Some(Ok(LogOutput::StdErr { message })) => {
-                    Some((String::from_utf8_lossy(&message).trim().to_string(), stream))
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+        tokio::spawn(async move {
+            tokio::select!(
+                _ = cancel.cancelled() => {
+                    tracing::debug!("Logs stream cancelled");
+                },
+                _ = async move {
+                    let mut stream = docker.logs(
+                        &container_id,
+                        Some(bollard::query_parameters::LogsOptions {
+                            follow: true,
+                            stdout: true,
+                            stderr: true,
+                            tail: "all".to_string(),
+                            ..Default::default()
+                        }),
+                    );
+                    tracing::debug!("Starting logs stream for container");
+                    while let Some(log_result) = stream.next().await {
+                        if let Err(err) = tx.send(log_result)
+                        .await {
+                            return tracing::error!("Failed to send log item: {}", err);
+                        }
+                    }
+                } => {
+                    tracing::debug!("Logs stream ended gracefully");
+                },
+                else => {
+                    tracing::error!("Logs stream ended unexpectedly");
                 }
-                _ => None,
-            }
-        }))
+            );
+
+            tracing::debug!("Closing logs stream channel");
+        });
+
+        ReceiverStream::new(rx)
     }
 
     async fn exec_shell(&self, cmd: &str) -> Result<CommandOutput, CommandError> {
@@ -312,6 +341,51 @@ impl RunningDockerExecutor {
 
         write_file_result
     }
+
+    /// Stops and removes the container associated with this executor.
+    pub async fn shutdown(&self) -> Result<(), DockerExecutorError> {
+        // Stop any jobs that might block the docker socket
+        self.cancel_token.cancel();
+
+        tracing::warn!(
+            "Dropped; stopping and removing container {container_id}",
+            container_id = self.container_id
+        );
+
+        let docker = self.docker.clone();
+        let container_id = self.container_id.clone();
+
+        tracing::debug!(
+            "Stopping container {container_id}",
+            container_id = container_id
+        );
+        docker
+            .kill_container(
+                &container_id,
+                Some(KillContainerOptions {
+                    signal: "SIGTERM".to_string(),
+                }),
+            )
+            .await?;
+
+        tracing::debug!(
+            "Removing container {container_id}",
+            container_id = container_id
+        );
+
+        docker
+            .remove_container(
+                &container_id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    v: true,
+                    ..Default::default()
+                }),
+            )
+            .await?;
+
+        Ok(())
+    }
 }
 
 impl Drop for RunningDockerExecutor {
@@ -332,53 +406,12 @@ impl Drop for RunningDockerExecutor {
         }
         self.dropped = true;
 
-        tracing::warn!(
-            "Dropped; stopping and removing container {container_id}",
-            container_id = self.container_id
-        );
-
-        let docker = self.docker.clone();
         let container_id = self.container_id.clone();
-
         let result = tokio::task::block_in_place(move || {
             let handle = tokio::runtime::Handle::current();
-            handle.block_on(tokio::time::timeout(
-                tokio::time::Duration::from_secs(5),
-                async {
-                    tracing::debug!(
-                        "Stopping container {container_id}",
-                        container_id = container_id
-                    );
-                    let _ = docker
-                        .kill_container(
-                            &container_id,
-                            Some(KillContainerOptions {
-                                signal: "SIGTERM".to_string(),
-                            }),
-                        )
-                        .await;
-
-                    tracing::debug!(
-                        "Removing container {container_id}",
-                        container_id = container_id
-                    );
-                    docker
-                        .remove_container(
-                            &container_id,
-                            Some(RemoveContainerOptions {
-                                force: true,
-                                v: true,
-                                ..Default::default()
-                            }),
-                        )
-                        .await
-                },
-            ))
+            handle.block_on(async { self.shutdown().await })
         });
-        tracing::debug!(
-            "Container stopped {container_id}",
-            container_id = self.container_id
-        );
+        tracing::debug!("Container stopped {container_id}");
 
         if let Err(e) = result {
             tracing::warn!(error = %e, "Error stopping container, might not be stopped");

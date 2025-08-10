@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 use bollard::{query_parameters::InspectContainerOptions, secret::ContainerStateStatusEnum};
@@ -880,4 +880,61 @@ async fn test_add_env() {
         "ANOTHER_ENV not set"
     );
     assert!(env_output.contains("HOME="), "HOME env not propagated");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_logs_stream_returns_live_log_lines() {
+    let executor = Arc::new(
+        DockerExecutor::default()
+            .with_dockerfile(TEST_DOCKERFILE)
+            .with_context_path(".")
+            .with_image_name("test-logs-stream")
+            .with_env("RUST_LOG", "debug")
+            .to_owned()
+            .start()
+            .await
+            .unwrap(),
+    );
+
+    // First, spawn the log tail in a tokio task and gather the logs in a vector
+    let executor_clone = executor.clone();
+    let log_task = tokio::spawn(async move {
+        let mut logs = vec![];
+        let mut stream = executor_clone.logs_stream().await;
+
+        while let Some(line) = stream.next().await {
+            println!("Log line: {line:?}");
+            match line {
+                Ok(log_line) => {
+                    logs.push(log_line.to_string());
+                }
+                Err(e) => {
+                    eprintln!("Error reading log line: {e}");
+                }
+            }
+        }
+        logs
+    });
+
+    println!("Waiting for logs to be generated...");
+
+    // Generate some logs
+    executor
+        .exec_cmd(&Command::Shell(
+            "echo log1 && echo log2 && echo log3".to_string(),
+        ))
+        .await
+        .unwrap();
+
+    // The log task won't complete unless we stop the executor
+    let _ = executor.shutdown().await;
+
+    // Stream logs and collect a few lines
+    let collected_logs = log_task.await.unwrap();
+    // Collect up to 10 log lines or until we find our expected output
+    let log_joined = collected_logs.join("\n");
+    assert!(
+        log_joined.contains("log1") && log_joined.contains("log2") && log_joined.contains("log3"),
+        "Expected logs not found in streamed output: {log_joined:?}"
+    );
 }
