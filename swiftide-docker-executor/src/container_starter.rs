@@ -73,6 +73,7 @@ impl ContainerStarter {
             Some(LogsOptions {
                 stdout: true,
                 stderr: true,
+                follow: true,
                 since: 0,
                 ..Default::default()
             }),
@@ -94,8 +95,8 @@ impl ContainerStarter {
                 count += 1;
                 continue;
             };
-            let log = log.to_string();
 
+            let log = log.to_string();
             tracing::debug!("Container: {}", &log);
 
             if log.contains("listening on") {
