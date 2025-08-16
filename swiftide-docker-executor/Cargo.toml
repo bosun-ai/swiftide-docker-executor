@@ -43,7 +43,7 @@ tonic-build = { workspace = true }
 
 
 [dev-dependencies]
-swiftide-agents = "0.29"
+swiftide-agents = "0.30"
 test-log = { version = "0.2", features = ["trace"] }
 insta = { version = "1.42.1", features = ["filters"] }
 pretty_assertions = "1.4"

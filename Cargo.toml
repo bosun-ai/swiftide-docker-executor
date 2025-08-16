@@ -8,8 +8,8 @@ prost = "0.13"
 tonic-build = "0.13"
 tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
-swiftide-core = "0.29"
-swiftide-indexing = "0.29"
+swiftide-core = "0.30"
+swiftide-indexing = "0.30"
 futures-util = "0.3"
 
 [workspace.package]
