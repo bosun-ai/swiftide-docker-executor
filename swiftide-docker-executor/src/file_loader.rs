@@ -1,7 +1,7 @@
 use std::{borrow::Cow, path::PathBuf};
 
 use codegen::{LoadFilesRequest, NodeResponse, loader_client::LoaderClient};
-use swiftide_core::{Loader, indexing::Node};
+use swiftide_core::{Loader, indexing::TextNode};
 use tokio::runtime::Handle;
 
 use crate::RunningDockerExecutor;
@@ -52,7 +52,8 @@ impl RunningDockerExecutor {
 }
 
 impl Loader for FileLoader<'_> {
-    fn into_stream(self) -> swiftide_core::indexing::IndexingStream {
+    type Output = String;
+    fn into_stream(self) -> swiftide_core::indexing::IndexingStream<String> {
         let container_ip = &self.executor.container_ip;
         let container_port = &self.executor.container_port;
         let mut client = tokio::task::block_in_place(|| {
@@ -62,7 +63,7 @@ impl Loader for FileLoader<'_> {
         })
         .expect("Failed to connect to service");
 
-        let (tx, rx) = tokio::sync::mpsc::channel::<anyhow::Result<Node>>(1000);
+        let (tx, rx) = tokio::sync::mpsc::channel::<anyhow::Result<TextNode>>(1000);
 
         tokio::task::spawn(async move {
             let stream = match client
@@ -100,11 +101,11 @@ impl Loader for FileLoader<'_> {
     }
 }
 
-impl TryInto<Node> for NodeResponse {
+impl TryInto<TextNode> for NodeResponse {
     type Error = anyhow::Error;
 
-    fn try_into(self) -> Result<Node, Self::Error> {
-        Node::builder()
+    fn try_into(self) -> Result<TextNode, Self::Error> {
+        TextNode::builder()
             .path(self.path)
             .chunk(self.chunk)
             .original_size(self.original_size as usize)

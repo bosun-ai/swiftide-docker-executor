@@ -63,7 +63,7 @@ impl ToolExecutor for RunningDockerExecutor {
         &self,
         path: &Path,
         extensions: Option<Vec<String>>,
-    ) -> anyhow::Result<swiftide_core::indexing::IndexingStream> {
+    ) -> anyhow::Result<swiftide_core::indexing::IndexingStream<String>> {
         let extensions = extensions.unwrap_or_default();
         Ok(self.as_file_loader(path, extensions).into_stream())
     }

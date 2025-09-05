@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use futures_util::{Stream, StreamExt as _, TryStreamExt};
 use swiftide_core::Loader as _;
-use swiftide_core::indexing::Node;
+use swiftide_core::indexing::TextNode;
 use swiftide_indexing::loaders::FileLoader;
 use tonic::Status;
 
@@ -42,8 +42,8 @@ impl Loader for MyLoaderExecutor {
     }
 }
 
-impl From<Node> for NodeResponse {
-    fn from(val: Node) -> Self {
+impl From<TextNode> for NodeResponse {
+    fn from(val: TextNode) -> Self {
         NodeResponse {
             path: val.path.to_string_lossy().to_string(),
             chunk: val.chunk,
