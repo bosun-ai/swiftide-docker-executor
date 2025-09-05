@@ -6,7 +6,7 @@ use bollard::{
 };
 use codegen::shell_executor_client::ShellExecutorClient;
 use futures_util::Stream;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, net::IpAddr, path::Path, sync::Arc};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{Command, CommandError, CommandOutput, Loader as _, prelude::StreamExt as _};
 use tokio_stream::wrappers::ReceiverStream;
@@ -27,7 +27,8 @@ pub use bollard::container::LogOutput;
 pub struct RunningDockerExecutor {
     pub container_id: String,
     pub(crate) docker: Arc<Client>,
-    pub host_port: String,
+    pub container_port: String,
+    pub container_ip: IpAddr,
     dropped: bool,
     retain_on_drop: bool,
 
@@ -134,12 +135,13 @@ impl RunningDockerExecutor {
 
         // Configure container
         let container_config = ContainerConfigurator::new(docker.socket_path.clone())
-            .create_container_config(&image_name, user);
+            .create_container_config(&image_name, user, &docker)
+            .await;
 
         // Start container
         tracing::info!("Starting container with image: {image_name} and uuid: {container_uuid}");
         let container_starter = ContainerStarter::new(docker.clone());
-        let (container_id, host_port) = container_starter
+        let (container_id, container_ip, container_port) = container_starter
             .start_container(&image_name, &container_uuid, container_config)
             .await?;
 
@@ -148,7 +150,8 @@ impl RunningDockerExecutor {
         let executor = RunningDockerExecutor {
             container_id,
             docker,
-            host_port,
+            container_port,
+            container_ip,
             env_clear: builder.env_clear,
             remove_env: builder.remove_env.clone(),
             env: builder.env.clone(),
@@ -271,10 +274,12 @@ impl RunningDockerExecutor {
     }
 
     async fn exec_shell(&self, cmd: &str) -> Result<CommandOutput, CommandError> {
-        let mut client =
-            ShellExecutorClient::connect(format!("http://127.0.0.1:{}", self.host_port))
-                .await
-                .map_err(anyhow::Error::from)?;
+        let mut client = ShellExecutorClient::connect(format!(
+            "http://{}:{}",
+            self.container_ip, self.container_port
+        ))
+        .await
+        .map_err(anyhow::Error::from)?;
 
         let request = tonic::Request::new(codegen::ShellRequest {
             command: cmd.to_string(),

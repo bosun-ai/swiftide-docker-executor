@@ -1,3 +1,5 @@
+use std::net::{IpAddr, ToSocketAddrs};
+use std::str::FromStr;
 use std::{sync::Arc, time::Duration};
 
 use bollard::{
@@ -25,7 +27,7 @@ impl ContainerStarter {
         image_name: &str,
         container_uuid: &Uuid,
         config: ContainerCreateBody,
-    ) -> Result<(String, String), ContainerStartError> {
+    ) -> Result<(String, IpAddr, String), ContainerStartError> {
         // Strip tag suffix from image name if present
         let image_name = if let Some(index) = image_name.find(':') {
             &image_name[..index]
@@ -57,9 +59,9 @@ impl ContainerStarter {
             .map_err(ContainerStartError::Start)?;
 
         self.wait_for_logs(&container_id).await?;
-        let host_port = self.get_host_port(&container_id).await?;
+        let (ip, port) = self.get_ip_and_port(&container_id).await?;
 
-        Ok((container_id, host_port))
+        Ok((container_id, ip, port))
     }
 
     async fn wait_for_logs(&self, container_id: &str) -> Result<(), ContainerStartError> {
@@ -110,7 +112,50 @@ impl ContainerStarter {
         Ok(())
     }
 
-    async fn get_host_port(&self, container_id: &str) -> Result<String, ContainerStartError> {
+    async fn get_ip_and_port(
+        &self,
+        container_id: &str,
+    ) -> Result<(IpAddr, String), ContainerStartError> {
+        // If we have a container ip, return inner port and ip
+        // If we have a host gateway ip (we i.e. running inside docker compose or docker), return that and the inner port
+        // Otherwise return localhost and the mapped port
+        if let Some(ip) = self.get_container_ip(container_id).await? {
+            return Ok((ip, "50051".into()));
+        }
+
+        if let Some(ip) = self.host_gateway_ip() {
+            return Ok((ip, "50051".into()));
+        }
+
+        let container_port = self.get_container_port(container_id).await?;
+        Ok((IpAddr::from_str("127.0.0.1").unwrap(), container_port))
+    }
+
+    async fn get_container_ip(
+        &self,
+        container_id: &str,
+    ) -> Result<Option<IpAddr>, ContainerStartError> {
+        let container_info = self
+            .docker
+            .inspect_container(container_id, None::<InspectContainerOptions>)
+            .await
+            .map_err(|e| ContainerStartError::PortMapping(e.to_string()))?;
+
+        Ok(container_info
+            .network_settings
+            .and_then(|ns| ns.networks)
+            .map(|nets| {
+                tracing::debug!(networks = ?nets, "Container networks");
+                nets
+            })
+            .and_then(|nets| nets.into_iter().find(|(k, _)| *k != "bridge"))
+            .and_then(|(_, endpoint)| endpoint.ip_address)
+            .as_deref()
+            .map(IpAddr::from_str)
+            .transpose()?)
+    }
+
+    async fn get_container_port(&self, container_id: &str) -> Result<String, ContainerStartError> {
         let container_info = self
             .docker
             .inspect_container(container_id, None::<InspectContainerOptions>)
@@ -130,5 +175,13 @@ impl ContainerStarter {
                 })
             })
             .ok_or_else(|| ContainerStartError::PortMapping("Failed to get container port".into()))
+    }
+
+    /// Tries to resolve the local docker gateway if it's present
+    fn host_gateway_ip(&self) -> Option<IpAddr> {
+        ("host.docker.internal", 0)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|v| v.take(1).next().map(|addr| addr.ip()))
     }
 }

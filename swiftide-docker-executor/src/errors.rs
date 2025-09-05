@@ -1,4 +1,4 @@
-use std::{convert::Infallible, path::StripPrefixError};
+use std::{convert::Infallible, net::AddrParseError, path::StripPrefixError};
 
 use thiserror::Error;
 
@@ -109,6 +109,9 @@ pub enum ContainerStartError {
 
     #[error("Error from logs: {0}")]
     Logs(String),
+
+    #[error("Invalid address: {0}")]
+    InvalidAddress(#[from] AddrParseError),
 }
 impl From<Infallible> for DockerExecutorError {
     fn from(_: Infallible) -> Self {
