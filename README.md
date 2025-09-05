@@ -30,6 +30,7 @@ let agent = Agent::builder().context(context).build();
 * The service is published on docker hub, and can also be used in other contexts (i.e. kubernetes)
 * Indexing files streaming, remotely, into a Swiftide indexing pipeline
 * Opt-in buildkit for faster builds
+* Supports running *inside* Compose by self discovering the network
 
 ## Loading files into a Swiftide indexing pipeline
 

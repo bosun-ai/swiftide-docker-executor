@@ -53,10 +53,11 @@ impl RunningDockerExecutor {
 
 impl Loader for FileLoader<'_> {
     fn into_stream(self) -> swiftide_core::indexing::IndexingStream {
-        let host_port = &self.executor.host_port;
+        let container_ip = &self.executor.container_ip;
+        let container_port = &self.executor.container_port;
         let mut client = tokio::task::block_in_place(|| {
             Handle::current().block_on(async {
-                LoaderClient::connect(format!("http://127.0.0.1:{host_port}")).await
+                LoaderClient::connect(format!("http://{container_ip}:{container_port}")).await
             })
         })
         .expect("Failed to connect to service");
