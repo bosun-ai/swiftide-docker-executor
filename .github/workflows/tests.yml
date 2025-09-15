@@ -78,7 +78,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - run: just docker-build-service
-      - run: docker pull rust:1.87-slim
+      - run: docker pull rust:1.89-slim
       - run: docker pull alpine:latest
       - run: docker info
       - name: "Test"

@@ -661,7 +661,7 @@ async fn test_docker_logs_in_stdout() {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_regression_complicated_dockerfile() {
     let dockerfile = r"
-ARG RUST_VERSION=1.87-slim
+ARG RUST_VERSION=1.89-slim
 FROM rust:${RUST_VERSION} as builder
 
 RUN rustup component add clippy rustfmt
