@@ -940,3 +940,46 @@ async fn test_logs_stream_returns_live_log_lines() {
         "Expected logs not found in streamed output: {log_joined:?}"
     );
 }
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_background_shell_command_returns_immediately() {
+    use std::time::Instant;
+
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-bg-cmd")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let start = Instant::now();
+
+    let output = executor
+        .exec_cmd(&Command::shell("sleep 2 &"))
+        .await
+        .unwrap();
+    let elapsed = start.elapsed();
+
+    // Assert that the response returned almost immediately (well before 2s)
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "Background command took too long: {elapsed:?}"
+    );
+
+    // Optionally, assert output for a friendly message
+    assert!(
+        output.to_string().contains("Background command started")
+            || output.to_string().trim().is_empty(),
+        "Unexpected output from background command: {}",
+        output
+    );
+
+    // Should still be able to run foreground commands
+    let echo = executor
+        .exec_cmd(&Command::Shell("echo done".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(echo.to_string(), "done");
+}

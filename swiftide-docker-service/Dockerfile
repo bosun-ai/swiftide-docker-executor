@@ -1,5 +1,5 @@
 # This dockerfile is used to build the swiftide-docker-service image
-FROM rust:1.88-slim as builder
+FROM rust:1.89-slim as builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   protobuf-compiler \

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
@@ -34,6 +35,36 @@ impl ShellExecutor for MyShellExecutor {
 
         tracing::info!(command, "Received command");
 
+        if is_background(&command) {
+            tracing::info!("Running command in background");
+            // Don't capture stdout or stderr, and don't wait for child process.
+            let mut cmd = Command::new("sh");
+            apply_env_settings(&mut cmd, env_clear, env_remove, envs);
+            cmd.arg("-c")
+                .arg(command)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+
+            // Spawn and detach
+            match cmd.spawn() {
+                Ok(_child) => {
+                    // Optionally: don't keep handle, just return success immediately
+                    return Ok(Response::new(ShellResponse {
+                        exit_code: 0,
+                        stdout: String::from("Background command started"),
+                        stderr: String::new(),
+                    }));
+                }
+                Err(e) => {
+                    // Handle error spawning command
+                    return Err(Status::internal(format!(
+                        "Failed to start background command: {e:?}"
+                    )));
+                }
+            }
+        }
+
         let lines: Vec<&str> = command.lines().collect();
         let mut child = if let Some(first_line) = lines.first()
             && first_line.starts_with("#!")
@@ -42,21 +73,7 @@ impl ShellExecutor for MyShellExecutor {
             tracing::info!(interpreter, "detected shebang; running as script");
 
             let mut cmd = Command::new(interpreter);
-
-            if env_clear {
-                tracing::info!("clearing environment variables");
-                cmd.env_clear();
-            }
-
-            for var in env_remove {
-                tracing::info!(var, "clearing environment variable");
-                cmd.env_remove(var);
-            }
-
-            for (key, value) in envs {
-                tracing::info!(key, "setting environment variable");
-                cmd.env(key, value);
-            }
+            apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
             let mut child = cmd
                 .stdin(Stdio::piped())
@@ -74,21 +91,8 @@ impl ShellExecutor for MyShellExecutor {
             tracing::info!("no shebang detected; running as command");
 
             let mut cmd = Command::new("sh");
+            apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
-            if env_clear {
-                tracing::info!("clearing environment variables");
-                cmd.env_clear();
-            }
-
-            for var in env_remove {
-                tracing::info!(var, "clearing environment variable");
-                cmd.env_remove(var);
-            }
-
-            for (key, value) in envs {
-                tracing::info!(key, "setting environment variable");
-                cmd.env(key, value);
-            }
             // Treat as shell command
             cmd.arg("-c")
                 .arg(&command)
@@ -165,5 +169,57 @@ impl ShellExecutor for MyShellExecutor {
         tracing::info!(command, exit_code = response.exit_code, "Command executed");
 
         Ok(Response::new(response))
+    }
+}
+
+fn apply_env_settings(
+    cmd: &mut Command,
+    env_clear: bool,
+    env_remove: Vec<String>,
+    envs: HashMap<String, String>,
+) {
+    if env_clear {
+        tracing::info!("clearing environment variables");
+        cmd.env_clear();
+    }
+
+    for var in env_remove {
+        tracing::info!(var, "clearing environment variable");
+        cmd.env_remove(var);
+    }
+
+    for (key, value) in envs {
+        tracing::info!(key, "setting environment variable");
+        cmd.env(key, value);
+    }
+}
+
+fn is_background(cmd: &str) -> bool {
+    let trimmed = cmd.trim_end();
+    trimmed.ends_with('&') && !trimmed.ends_with("\\&")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_background;
+
+    #[test]
+    fn test_is_background_basic() {
+        assert!(is_background("echo hello &"));
+    }
+
+    #[test]
+    fn test_is_background_trailing_spaces() {
+        assert!(is_background("echo hello    &  "));
+    }
+
+    #[test]
+    fn test_is_background_escaped_ampersand() {
+        assert!(!is_background("echo hello \\&"));
+    }
+
+    #[test]
+    fn test_is_not_background() {
+        assert!(!is_background("echo hello"));
     }
 }
