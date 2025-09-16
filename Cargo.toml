@@ -21,11 +21,11 @@ homepage = "https://github.com/bosun-ai/swiftide"
 repository = "https://github.com/bosun-ai/swiftide-docker-executor"
 edition = "2024"
 build = "build.rs"
-version = "0.13.0"
+version = "0.12.3"
 categories = ["asynchronous"]
 
 [patch.crates-io]
-swiftide-core = { git = "https://github.com/bosun-ai/swiftide", features = [
-], package = "swiftide-core", branch = "feat/generic-indexing" }
-swiftide-indexing = { git = "https://github.com/bosun-ai/swiftide", features = [
-], package = "swiftide-indexing", branch = "feat/generic-indexing" }
+# swiftide-core = { git = "https://github.com/bosun-ai/swiftide", features = [
+# ], package = "swiftide-core", branch = "feat/generic-indexing" }
+# swiftide-indexing = { git = "https://github.com/bosun-ai/swiftide", features = [
+# ], package = "swiftide-indexing", branch = "feat/generic-indexing" }
