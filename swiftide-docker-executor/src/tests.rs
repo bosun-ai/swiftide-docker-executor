@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 use bollard::{query_parameters::InspectContainerOptions, secret::ContainerStateStatusEnum};
-use swiftide_core::{Command, Loader as _, ToolExecutor as _, indexing::Node};
+use swiftide_core::{Command, Loader as _, ToolExecutor as _, indexing::TextNode};
 use tokio_stream::StreamExt as _;
 
 use crate::{DockerExecutor, DockerExecutorError};
@@ -738,7 +738,10 @@ async fn test_loading_files() {
     let loader_stream = loader.into_stream();
 
     // Collect the results from the stream and assert there's a bunch of rust files
-    let files = loader_stream.collect::<Result<Vec<Node>>>().await.unwrap();
+    let files = loader_stream
+        .collect::<Result<Vec<TextNode>>>()
+        .await
+        .unwrap();
 
     assert!(!files.is_empty(), "No files loaded");
     assert!(
