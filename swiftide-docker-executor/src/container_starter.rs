@@ -123,7 +123,9 @@ impl ContainerStarter {
             return Ok((ip, "50051".into()));
         }
 
-        if self.is_running_in_docker() && let Some(ip) = self.host_gateway_ip() {
+        if self.is_running_in_docker()
+            && let Some(ip) = self.host_gateway_ip()
+        {
             return Ok((ip, "50051".into()));
         }
 
