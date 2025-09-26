@@ -123,7 +123,7 @@ impl ContainerStarter {
             return Ok((ip, "50051".into()));
         }
 
-        if let Some(ip) = self.host_gateway_ip() {
+        if self.is_running_in_docker() && let Some(ip) = self.host_gateway_ip() {
             return Ok((ip, "50051".into()));
         }
 
@@ -183,5 +183,9 @@ impl ContainerStarter {
             .to_socket_addrs()
             .ok()
             .and_then(|v| v.take(1).next().map(|addr| addr.ip()))
+    }
+
+    fn is_running_in_docker(&self) -> bool {
+        std::fs::metadata("/.dockerenv").is_ok()
     }
 }
