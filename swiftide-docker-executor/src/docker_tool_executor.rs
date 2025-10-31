@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 use uuid::Uuid;
 
 use crate::{DockerExecutorError, RunningDockerExecutor};
@@ -15,6 +15,7 @@ pub struct DockerExecutor {
     pub(crate) remove_env: Vec<String>,
     pub(crate) env: HashMap<String, String>,
     pub(crate) retain_on_drop: bool,
+    pub(crate) default_timeout: Option<Duration>,
 }
 
 impl Default for DockerExecutor {
@@ -29,6 +30,7 @@ impl Default for DockerExecutor {
             env_clear: false,
             remove_env: vec![],
             retain_on_drop: false,
+            default_timeout: None,
         }
     }
 }
@@ -72,6 +74,20 @@ impl DockerExecutor {
     /// Set multiple environment variables for the service in the container
     pub fn with_envs(&mut self, envs: impl Into<HashMap<String, String>>) -> &mut Self {
         self.env.extend(envs.into());
+
+        self
+    }
+
+    /// Use the provided timeout as the default for every command executed against the container.
+    pub fn with_default_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.default_timeout = Some(timeout);
+
+        self
+    }
+
+    /// Remove any default timeout previously configured on this executor.
+    pub fn clear_default_timeout(&mut self) -> &mut Self {
+        self.default_timeout = None;
 
         self
     }

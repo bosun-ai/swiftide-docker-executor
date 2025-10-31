@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
 use tokio::process::Command;
-use tokio::task::JoinSet;
+use tokio::task::JoinHandle;
+use tokio::time;
 use tonic::{Request, Response, Status};
 
 // The module `shell` is created by Tonic automatically because your
@@ -31,7 +33,11 @@ impl ShellExecutor for MyShellExecutor {
             env_clear,
             env_remove,
             envs,
+            timeout_ms,
         } = request.into_inner();
+
+        let timeout = timeout_ms.map(Duration::from_millis);
+        tracing::debug!(?timeout, "resolved timeout for shell request");
 
         tracing::info!(command, "Received command");
 
@@ -93,7 +99,6 @@ impl ShellExecutor for MyShellExecutor {
             let mut cmd = Command::new("sh");
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
-            // Treat as shell command
             cmd.arg("-c")
                 .arg(&command)
                 .stdin(Stdio::null())
@@ -105,13 +110,9 @@ impl ShellExecutor for MyShellExecutor {
                     Status::internal(format!("Failed to start command: {e:?}"))
                 })?
         };
-        // Run the command in a shell
 
-        // NOTE: Feels way overcomplicated just because we want both stderr and stdout
-        let mut joinset = JoinSet::new();
-
-        if let Some(stdout) = child.stdout.take() {
-            joinset.spawn(async move {
+        let stdout_task = if let Some(stdout) = child.stdout.take() {
+            Some(tokio::spawn(async move {
                 let mut lines = tokio::io::BufReader::new(stdout).lines();
                 let mut out = Vec::new();
                 while let Ok(Some(line)) = lines.next_line().await {
@@ -119,13 +120,14 @@ impl ShellExecutor for MyShellExecutor {
                     out.push(line);
                 }
                 out
-            });
+            }))
         } else {
             tracing::warn!("Command has no stdout");
-        }
+            None
+        };
 
-        if let Some(stderr) = child.stderr.take() {
-            joinset.spawn(async move {
+        let stderr_task = if let Some(stderr) = child.stderr.take() {
+            Some(tokio::spawn(async move {
                 let mut lines = tokio::io::BufReader::new(stderr).lines();
                 let mut out = Vec::new();
                 while let Ok(Some(line)) = lines.next_line().await {
@@ -133,37 +135,57 @@ impl ShellExecutor for MyShellExecutor {
                     out.push(line);
                 }
                 out
-            });
+            }))
         } else {
             tracing::warn!("Command has no stderr");
-        }
-
-        let outputs = joinset.join_all().await;
-        let &[stdout, stderr] = outputs
-            .iter()
-            .map(Vec::as_slice)
-            .collect::<Vec<_>>()
-            .as_slice()
-        else {
-            // This should never happen
-            tracing::error!("Failed to get outputs");
-            return Err(Status::internal("Failed to join stdout and stderr"));
+            None
         };
 
-        // outputs stdout and stderr should be empty
-        let output = child.wait_with_output().await.map_err(|e| {
-            tracing::error!(error = ?e, "Failed to wait for command");
-            Status::internal(format!("Failed to wait for command: {e:?}"))
-        })?;
+        let wait_future = child.wait();
+        let status = match timeout {
+            Some(limit) => match time::timeout(limit, wait_future).await {
+                Ok(result) => result.map_err(|e| {
+                    tracing::error!(error = ?e, "Failed to wait for command");
+                    Status::internal(format!("Failed to wait for command: {e:?}"))
+                })?,
+                Err(_) => {
+                    tracing::warn!(?limit, "Command exceeded timeout; terminating");
+                    if let Err(err) = child.start_kill() {
+                        tracing::warn!(?err, "Failed to start kill on timed out command");
+                    }
+                    if let Err(err) = child.wait().await {
+                        tracing::warn!(?err, "Failed to reap timed out command");
+                    }
 
-        debug_assert!(stdout.is_empty());
-        debug_assert!(stderr.is_empty());
+                    let (stdout_lines, stderr_lines) =
+                        collect_process_output(stdout_task, stderr_task).await;
+                    let stdout = stdout_lines.join("\n");
+                    let stderr = stderr_lines.join("\n");
+                    let combined = merge_output(&stdout, &stderr);
 
-        // Prepare response
+                    let message = if combined.is_empty() {
+                        format!("Command timed out after {limit:?}")
+                    } else {
+                        format!("Command timed out after {limit:?}: {combined}")
+                    };
+
+                    return Err(Status::deadline_exceeded(message));
+                }
+            },
+            None => wait_future.await.map_err(|e| {
+                tracing::error!(error = ?e, "Failed to wait for command");
+                Status::internal(format!("Failed to wait for command: {e:?}"))
+            })?,
+        };
+
+        let (stdout_lines, stderr_lines) = collect_process_output(stdout_task, stderr_task).await;
+        let stdout = stdout_lines.join("\n");
+        let stderr = stderr_lines.join("\n");
+
         let response = ShellResponse {
-            exit_code: output.status.code().unwrap_or(-1),
-            stdout: stdout.join("\n"),
-            stderr: stderr.join("\n"),
+            exit_code: status.code().unwrap_or(-1),
+            stdout,
+            stderr,
         };
 
         tracing::info!(command, exit_code = response.exit_code, "Command executed");
@@ -197,6 +219,44 @@ fn apply_env_settings(
 fn is_background(cmd: &str) -> bool {
     let trimmed = cmd.trim_end();
     trimmed.ends_with('&') && !trimmed.ends_with("\\&")
+}
+
+async fn collect_process_output(
+    stdout_task: Option<JoinHandle<Vec<String>>>,
+    stderr_task: Option<JoinHandle<Vec<String>>>,
+) -> (Vec<String>, Vec<String>) {
+    let stdout = match stdout_task {
+        Some(task) => match task.await {
+            Ok(lines) => lines,
+            Err(err) => {
+                tracing::warn!(?err, "Failed to collect stdout from command");
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
+
+    let stderr = match stderr_task {
+        Some(task) => match task.await {
+            Ok(lines) => lines,
+            Err(err) => {
+                tracing::warn!(?err, "Failed to collect stderr from command");
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
+
+    (stdout, stderr)
+}
+
+fn merge_output(stdout: &str, stderr: &str) -> String {
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => stdout.to_string(),
+        (true, false) => stderr.to_string(),
+        (false, false) => format!("{stdout}\n{stderr}"),
+    }
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@ use bollard::{
 };
 use codegen::shell_executor_client::ShellExecutorClient;
 use futures_util::Stream;
-use std::{collections::HashMap, net::IpAddr, path::Path, sync::Arc};
+use std::{collections::HashMap, net::IpAddr, path::Path, sync::Arc, time::Duration};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{Command, CommandError, CommandOutput, Loader as _, prelude::StreamExt as _};
 use tokio_stream::wrappers::ReceiverStream;
@@ -36,6 +36,7 @@ pub struct RunningDockerExecutor {
     pub(crate) env_clear: bool,
     pub(crate) remove_env: Vec<String>,
     pub(crate) env: HashMap<String, String>,
+    pub(crate) default_timeout: Option<Duration>,
 
     /// Cancellation token to stop anything polling the docker api
     cancel_token: Arc<CancellationToken>,
@@ -51,10 +52,15 @@ impl From<RunningDockerExecutor> for Arc<dyn ToolExecutor> {
 impl ToolExecutor for RunningDockerExecutor {
     #[tracing::instrument(skip(self), err)]
     async fn exec_cmd(&self, cmd: &Command) -> Result<CommandOutput, CommandError> {
+        let timeout = cmd.timeout_duration().copied().or(self.default_timeout);
+        let current_dir = cmd.current_dir_path();
+
         match cmd {
-            Command::Shell(cmd) => self.exec_shell(cmd).await,
-            Command::ReadFile(path) => self.read_file(path).await,
-            Command::WriteFile(path, content) => self.write_file(path, content).await,
+            Command::Shell { command, .. } => self.exec_shell(command, current_dir, timeout).await,
+            Command::ReadFile { path, .. } => self.read_file(path, current_dir, timeout).await,
+            Command::WriteFile { path, content, .. } => {
+                self.write_file(path, content, current_dir, timeout).await
+            }
             _ => unimplemented!(),
         }
     }
@@ -158,11 +164,16 @@ impl RunningDockerExecutor {
             dropped: false,
             retain_on_drop: builder.retain_on_drop,
             cancel_token: Arc::new(CancellationToken::new()),
+            default_timeout: builder.default_timeout,
         };
 
         if let Some(tmp_dockerfile_name) = tmp_dockerfile_name {
             executor
-                .exec_shell(&format!("rm {}", tmp_dockerfile_name.as_str()))
+                .exec_shell(
+                    &format!("rm {}", tmp_dockerfile_name.as_str()),
+                    None,
+                    executor.default_timeout,
+                )
                 .await
                 .context("failed to remove temporary dockerfile")
                 .map_err(DockerExecutorError::Start)?;
@@ -273,7 +284,12 @@ impl RunningDockerExecutor {
         ReceiverStream::new(rx)
     }
 
-    async fn exec_shell(&self, cmd: &str) -> Result<CommandOutput, CommandError> {
+    async fn exec_shell(
+        &self,
+        cmd: &str,
+        _current_dir: Option<&Path>,
+        timeout: Option<Duration>,
+    ) -> Result<CommandOutput, CommandError> {
         let mut client = ShellExecutorClient::connect(format!(
             "http://{}:{}",
             self.container_ip, self.container_port
@@ -281,51 +297,90 @@ impl RunningDockerExecutor {
         .await
         .map_err(anyhow::Error::from)?;
 
+        let timeout_ms = timeout.map(duration_to_millis);
+        tracing::debug!(?timeout_ms, "sending shell request with timeout");
+
         let request = tonic::Request::new(codegen::ShellRequest {
             command: cmd.to_string(),
             env_clear: self.env_clear,
             env_remove: self.remove_env.clone(),
             envs: self.env.clone(),
+            timeout_ms,
         });
 
-        let response = client
-            .exec_shell(request)
-            .await
-            .map_err(anyhow::Error::from)?;
+        let response = match client.exec_shell(request).await {
+            Ok(resp) => resp.into_inner(),
+            Err(status) => {
+                if status.code() == tonic::Code::DeadlineExceeded {
+                    if let Some(limit) = timeout {
+                        let message = status.message().to_string();
+                        let output = if message.is_empty() {
+                            CommandOutput::empty()
+                        } else {
+                            CommandOutput::new(message)
+                        };
+
+                        return Err(CommandError::TimedOut {
+                            timeout: limit,
+                            output,
+                        });
+                    }
+
+                    return Err(CommandError::ExecutorError(status.into()));
+                }
+
+                return Err(CommandError::ExecutorError(status.into()));
+            }
+        };
 
         let codegen::ShellResponse {
             stdout,
             stderr,
             exit_code,
-        } = response.into_inner();
+        } = response;
 
-        // // Trim both stdout and stderr to remove surrounding whitespace and newlines
-        let output = stdout.trim().to_string() + stderr.trim();
-        //
+        let stdout = stdout.trim().to_string();
+        let stderr = stderr.trim().to_string();
+        let merged = merge_stream_output(&stdout, &stderr);
+
         if exit_code == 0 {
-            Ok(output.into())
+            Ok(CommandOutput::new(merged))
         } else {
-            Err(CommandError::NonZeroExit(output.into()))
+            Err(CommandError::NonZeroExit(CommandOutput::new(merged)))
         }
     }
 
     #[tracing::instrument(skip(self))]
-    async fn read_file(&self, path: &Path) -> Result<CommandOutput, CommandError> {
-        self.exec_shell(&format!("cat {}", path.display())).await
+    async fn read_file(
+        &self,
+        path: &Path,
+        current_dir: Option<&Path>,
+        timeout: Option<Duration>,
+    ) -> Result<CommandOutput, CommandError> {
+        let cmd = format!("cat {}", shell_escape(path));
+        self.exec_shell(&cmd, current_dir, timeout).await
     }
 
     #[tracing::instrument(skip(self, content))]
-    async fn write_file(&self, path: &Path, content: &str) -> Result<CommandOutput, CommandError> {
-        let cmd = indoc::formatdoc! {r#"
+    async fn write_file(
+        &self,
+        path: &Path,
+        content: &str,
+        current_dir: Option<&Path>,
+        timeout: Option<Duration>,
+    ) -> Result<CommandOutput, CommandError> {
+        let path_escaped = shell_escape(path);
+        let cmd = indoc::formatdoc! {
+            r#"
             cat << 'EOFKWAAK' > {path}
             {content}
             EOFKWAAK"#,
-            path = path.display(),
+            path = path_escaped,
             content = content.trim_end()
 
         };
 
-        let write_file_result = self.exec_shell(&cmd).await;
+        let write_file_result = self.exec_shell(&cmd, current_dir, timeout).await;
 
         // If the directory or file does not exist, create it
         if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result
@@ -338,10 +393,10 @@ impl RunningDockerExecutor {
             .any(|&s| write_file.output.to_lowercase().contains(s))
         {
             let path = path.parent().context("No parent directory")?;
-            let mkdircmd = format!("mkdir -p {}", path.display());
-            let _ = self.exec_shell(&mkdircmd).await?;
+            let mkdircmd = format!("mkdir -p {}", shell_escape(path));
+            let _ = self.exec_shell(&mkdircmd, current_dir, timeout).await?;
 
-            return self.exec_shell(&cmd).await;
+            return self.exec_shell(&cmd, current_dir, timeout).await;
         }
 
         write_file_result
@@ -390,6 +445,33 @@ impl RunningDockerExecutor {
             .await?;
 
         Ok(())
+    }
+}
+
+fn merge_stream_output(stdout: &str, stderr: &str) -> String {
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => stdout.to_string(),
+        (true, false) => stderr.to_string(),
+        (false, false) => format!("{stdout}\n{stderr}"),
+    }
+}
+
+fn shell_escape(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if value.is_empty() {
+        "''".to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\\''"))
+    }
+}
+
+fn duration_to_millis(duration: Duration) -> u64 {
+    let millis = duration.as_millis();
+    if millis > u64::MAX as u128 {
+        u64::MAX
+    } else {
+        millis as u64
     }
 }
 
