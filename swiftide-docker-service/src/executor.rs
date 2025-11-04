@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -34,12 +35,16 @@ impl ShellExecutor for MyShellExecutor {
             env_remove,
             envs,
             timeout_ms,
+            cwd,
         } = request.into_inner();
 
         let timeout = timeout_ms.map(Duration::from_millis);
         tracing::debug!(?timeout, "resolved timeout for shell request");
 
         tracing::info!(command, "Received command");
+
+        let workdir = cwd.unwrap_or_else(|| ".".to_string());
+        let workdir_path = Path::new(&workdir);
 
         if is_background(&command) {
             tracing::info!("Running command in background");
@@ -48,6 +53,7 @@ impl ShellExecutor for MyShellExecutor {
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
             cmd.arg("-c")
                 .arg(command)
+                .current_dir(workdir_path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
@@ -82,6 +88,7 @@ impl ShellExecutor for MyShellExecutor {
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
             let mut child = cmd
+                .current_dir(workdir_path)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -101,6 +108,7 @@ impl ShellExecutor for MyShellExecutor {
 
             cmd.arg("-c")
                 .arg(&command)
+                .current_dir(workdir_path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())

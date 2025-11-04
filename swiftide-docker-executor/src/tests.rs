@@ -127,6 +127,69 @@ async fn test_context_present() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_current_dir_resolution() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-workdir-resolution")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let default_pwd = executor.exec_cmd(&Command::shell("pwd")).await.unwrap();
+    assert_eq!(default_pwd.to_string(), "/app");
+
+    executor
+        .exec_cmd(&Command::shell("mkdir -p project"))
+        .await
+        .unwrap();
+
+    let relative_pwd = executor
+        .exec_cmd(&Command::shell("pwd").with_current_dir("project"))
+        .await
+        .unwrap();
+    assert_eq!(relative_pwd.to_string(), "/app/project");
+
+    let absolute_pwd = executor
+        .exec_cmd(&Command::shell("pwd").with_current_dir("/tmp"))
+        .await
+        .unwrap();
+    assert_eq!(absolute_pwd.to_string(), "/tmp");
+
+    let write_cmd =
+        Command::write_file(Path::new("nested/file.txt"), "hello").with_current_dir("project");
+    executor.exec_cmd(&write_cmd).await.unwrap();
+
+    let read_cmd = Command::read_file(Path::new("nested/file.txt")).with_current_dir("project");
+    let read_output = executor.exec_cmd(&read_cmd).await.unwrap();
+    assert_eq!(read_output.output, "hello");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_default_workdir_override() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-workdir-override")
+        .with_workdir("/tmp")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let pwd = executor.exec_cmd(&Command::shell("pwd")).await.unwrap();
+    assert_eq!(pwd.to_string(), "/tmp");
+
+    let write_cmd = Command::write_file(Path::new("override.txt"), "contents");
+    executor.exec_cmd(&write_cmd).await.unwrap();
+
+    let read_cmd = Command::read_file(Path::new("override.txt"));
+    let read_output = executor.exec_cmd(&read_cmd).await.unwrap();
+    assert_eq!(read_output.output, "contents");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_overrides_include_git_respects_ignore() {
     let context_path = tempfile::tempdir().unwrap();
     // add a docker ignore file with .git

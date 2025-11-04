@@ -6,7 +6,13 @@ use bollard::{
 };
 use codegen::shell_executor_client::ShellExecutorClient;
 use futures_util::Stream;
-use std::{collections::HashMap, net::IpAddr, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{Command, CommandError, CommandOutput, Loader as _, prelude::StreamExt as _};
 use tokio_stream::wrappers::ReceiverStream;
@@ -37,6 +43,7 @@ pub struct RunningDockerExecutor {
     pub(crate) remove_env: Vec<String>,
     pub(crate) env: HashMap<String, String>,
     pub(crate) default_timeout: Option<Duration>,
+    pub(crate) workdir: PathBuf,
 
     /// Cancellation token to stop anything polling the docker api
     cancel_token: Arc<CancellationToken>,
@@ -52,14 +59,14 @@ impl From<RunningDockerExecutor> for Arc<dyn ToolExecutor> {
 impl ToolExecutor for RunningDockerExecutor {
     #[tracing::instrument(skip(self), err)]
     async fn exec_cmd(&self, cmd: &Command) -> Result<CommandOutput, CommandError> {
-        let timeout = cmd.timeout_duration().copied().or(self.default_timeout);
-        let current_dir = cmd.current_dir_path();
+        let workdir = self.resolve_workdir(cmd);
+        let timeout = self.resolve_timeout(cmd);
 
         match cmd {
-            Command::Shell { command, .. } => self.exec_shell(command, current_dir, timeout).await,
-            Command::ReadFile { path, .. } => self.read_file(path, current_dir, timeout).await,
+            Command::Shell { command, .. } => self.exec_shell(command, &workdir, timeout).await,
+            Command::ReadFile { path, .. } => self.exec_read_file(&workdir, path, timeout).await,
             Command::WriteFile { path, content, .. } => {
-                self.write_file(path, content, current_dir, timeout).await
+                self.exec_write_file(&workdir, path, content, timeout).await
             }
             _ => unimplemented!(),
         }
@@ -165,13 +172,14 @@ impl RunningDockerExecutor {
             retain_on_drop: builder.retain_on_drop,
             cancel_token: Arc::new(CancellationToken::new()),
             default_timeout: builder.default_timeout,
+            workdir: builder.workdir.clone(),
         };
 
         if let Some(tmp_dockerfile_name) = tmp_dockerfile_name {
             executor
                 .exec_shell(
                     &format!("rm {}", tmp_dockerfile_name.as_str()),
-                    None,
+                    &executor.workdir,
                     executor.default_timeout,
                 )
                 .await
@@ -284,10 +292,22 @@ impl RunningDockerExecutor {
         ReceiverStream::new(rx)
     }
 
+    fn resolve_workdir(&self, cmd: &Command) -> PathBuf {
+        match cmd.current_dir_path() {
+            Some(path) if path.is_absolute() => path.to_path_buf(),
+            Some(path) => self.workdir.join(path),
+            None => self.workdir.clone(),
+        }
+    }
+
+    fn resolve_timeout(&self, cmd: &Command) -> Option<Duration> {
+        cmd.timeout_duration().copied().or(self.default_timeout)
+    }
+
     async fn exec_shell(
         &self,
         cmd: &str,
-        _current_dir: Option<&Path>,
+        workdir: &Path,
         timeout: Option<Duration>,
     ) -> Result<CommandOutput, CommandError> {
         let mut client = ShellExecutorClient::connect(format!(
@@ -306,6 +326,7 @@ impl RunningDockerExecutor {
             env_remove: self.remove_env.clone(),
             envs: self.env.clone(),
             timeout_ms,
+            cwd: Some(workdir.display().to_string()),
         });
 
         let response = match client.exec_shell(request).await {
@@ -351,22 +372,22 @@ impl RunningDockerExecutor {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn read_file(
+    async fn exec_read_file(
         &self,
+        workdir: &Path,
         path: &Path,
-        current_dir: Option<&Path>,
         timeout: Option<Duration>,
     ) -> Result<CommandOutput, CommandError> {
-        let cmd = format!("cat {}", shell_escape(path));
-        self.exec_shell(&cmd, current_dir, timeout).await
+        let cmd = format!("cat {}", path.display());
+        self.exec_shell(&cmd, workdir, timeout).await
     }
 
     #[tracing::instrument(skip(self, content))]
-    async fn write_file(
+    async fn exec_write_file(
         &self,
+        workdir: &Path,
         path: &Path,
         content: &str,
-        current_dir: Option<&Path>,
         timeout: Option<Duration>,
     ) -> Result<CommandOutput, CommandError> {
         let cmd = indoc::formatdoc! {
@@ -379,7 +400,7 @@ impl RunningDockerExecutor {
 
         };
 
-        let write_file_result = self.exec_shell(&cmd, current_dir, timeout).await;
+        let write_file_result = self.exec_shell(&cmd, workdir, timeout).await;
 
         // If the directory or file does not exist, create it
         if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result
@@ -392,10 +413,10 @@ impl RunningDockerExecutor {
             .any(|&s| write_file.output.to_lowercase().contains(s))
         {
             let path = path.parent().context("No parent directory")?;
-            let mkdircmd = format!("mkdir -p {}", shell_escape(path));
-            let _ = self.exec_shell(&mkdircmd, current_dir, timeout).await?;
+            let mkdircmd = format!("mkdir -p {}", path.display());
+            let _ = self.exec_shell(&mkdircmd, workdir, timeout).await?;
 
-            return self.exec_shell(&cmd, current_dir, timeout).await;
+            return self.exec_shell(&cmd, workdir, timeout).await;
         }
 
         write_file_result
@@ -453,15 +474,6 @@ fn merge_stream_output(stdout: &str, stderr: &str) -> String {
         (false, true) => stdout.to_string(),
         (true, false) => stderr.to_string(),
         (false, false) => format!("{stdout}\n{stderr}"),
-    }
-}
-
-fn shell_escape(path: &Path) -> String {
-    let value = path.to_string_lossy();
-    if value.is_empty() {
-        "''".to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\\''"))
     }
 }
 

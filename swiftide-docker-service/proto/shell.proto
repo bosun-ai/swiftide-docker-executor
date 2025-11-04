@@ -18,6 +18,9 @@ message ShellRequest {
 
   // Optional timeout in milliseconds for the command execution.
   optional uint64 timeout_ms = 6;
+
+  // Optional working directory for the command execution.
+  optional string cwd = 7;
 }
 
 // The response message containing exit code, stdout, and stderr.

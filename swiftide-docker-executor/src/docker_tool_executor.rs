@@ -16,6 +16,7 @@ pub struct DockerExecutor {
     pub(crate) env: HashMap<String, String>,
     pub(crate) retain_on_drop: bool,
     pub(crate) default_timeout: Option<Duration>,
+    pub(crate) workdir: PathBuf,
 }
 
 impl Default for DockerExecutor {
@@ -31,6 +32,7 @@ impl Default for DockerExecutor {
             remove_env: vec![],
             retain_on_drop: false,
             default_timeout: None,
+            workdir: "/app".into(),
         }
     }
 }
@@ -39,6 +41,13 @@ impl DockerExecutor {
     /// Set the path to build the context from (default ".")
     pub fn with_context_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.context_path = path.into();
+
+        self
+    }
+
+    /// Set the default working directory inside the container (default "/app")
+    pub fn with_workdir(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.workdir = path.into();
 
         self
     }
