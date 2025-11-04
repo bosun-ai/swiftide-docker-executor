@@ -369,13 +369,12 @@ impl RunningDockerExecutor {
         current_dir: Option<&Path>,
         timeout: Option<Duration>,
     ) -> Result<CommandOutput, CommandError> {
-        let path_escaped = shell_escape(path);
         let cmd = indoc::formatdoc! {
             r#"
             cat << 'EOFKWAAK' > {path}
             {content}
             EOFKWAAK"#,
-            path = path_escaped,
+            path = path.display(),
             content = content.trim_end()
 
         };
