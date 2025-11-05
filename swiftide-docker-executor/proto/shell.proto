@@ -15,6 +15,12 @@ message ShellRequest {
   bool env_clear = 3;
   repeated string env_remove = 4;
   map<string, string> envs = 5;
+
+  // Optional timeout in milliseconds for the command execution.
+  optional uint64 timeout_ms = 6;
+
+  // Optional working directory for the command execution.
+  optional string cwd = 7;
 }
 
 // The response message containing exit code, stdout, and stderr.
@@ -23,4 +29,3 @@ message ShellResponse {
   string stdout = 2;
   string stderr = 3;
 }
-

@@ -1,8 +1,8 @@
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use bollard::{query_parameters::InspectContainerOptions, secret::ContainerStateStatusEnum};
-use swiftide_core::{Command, Loader as _, ToolExecutor as _, indexing::TextNode};
+use swiftide_core::{Command, CommandError, Loader as _, ToolExecutor as _, indexing::TextNode};
 use tokio_stream::StreamExt as _;
 
 use crate::{DockerExecutor, DockerExecutorError};
@@ -26,21 +26,21 @@ async fn test_runs_docker_and_echos() {
     assert!(executor.is_running().await, "Container should be running");
 
     let output = executor
-        .exec_cmd(&Command::Shell("echo hello".to_string()))
+        .exec_cmd(&Command::shell("echo hello"))
         .await
         .unwrap();
 
     assert_eq!(output.to_string(), "hello");
 
     let output = executor
-        .exec_cmd(&Command::Shell("which rg".to_string()))
+        .exec_cmd(&Command::shell("which rg"))
         .await
         .unwrap();
 
     assert_eq!(output.to_string(), "/usr/bin/rg");
 
     let output = executor
-        .exec_cmd(&Command::Shell("rg Cargo.toml".to_string()))
+        .exec_cmd(&Command::shell("rg Cargo.toml"))
         .await
         .unwrap();
 
@@ -74,21 +74,21 @@ async fn test_runs_on_alpine() {
     assert!(executor.is_running().await, "Container should be running");
 
     let output = executor
-        .exec_cmd(&Command::Shell("echo hello".to_string()))
+        .exec_cmd(&Command::shell("echo hello"))
         .await
         .unwrap();
 
     assert_eq!(output.to_string(), "hello");
 
     let output = executor
-        .exec_cmd(&Command::Shell("which rg".to_string()))
+        .exec_cmd(&Command::shell("which rg"))
         .await
         .unwrap();
 
     assert_eq!(output.to_string(), "/usr/bin/rg");
 
     let output = executor
-        .exec_cmd(&Command::Shell("rg Cargo.toml".to_string()))
+        .exec_cmd(&Command::shell("rg Cargo.toml"))
         .await
         .unwrap();
 
@@ -118,15 +118,75 @@ async fn test_context_present() {
         .await
         .unwrap();
 
-    let ls = executor
-        .exec_cmd(&Command::Shell("ls -a".to_string()))
-        .await
-        .unwrap();
+    let ls = executor.exec_cmd(&Command::shell("ls -a")).await.unwrap();
 
     assert!(
         ls.to_string().contains("Cargo.toml"),
         "Context did not contain `Cargo.toml`, actual:\n {ls}"
     );
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_current_dir_resolution() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-workdir-resolution")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let default_pwd = executor.exec_cmd(&Command::shell("pwd")).await.unwrap();
+    assert_eq!(default_pwd.to_string(), "/app");
+
+    executor
+        .exec_cmd(&Command::shell("mkdir -p project"))
+        .await
+        .unwrap();
+
+    let relative_pwd = executor
+        .exec_cmd(&Command::shell("pwd").with_current_dir("project"))
+        .await
+        .unwrap();
+    assert_eq!(relative_pwd.to_string(), "/app/project");
+
+    let absolute_pwd = executor
+        .exec_cmd(&Command::shell("pwd").with_current_dir("/tmp"))
+        .await
+        .unwrap();
+    assert_eq!(absolute_pwd.to_string(), "/tmp");
+
+    let write_cmd =
+        Command::write_file(Path::new("nested/file.txt"), "hello").with_current_dir("project");
+    executor.exec_cmd(&write_cmd).await.unwrap();
+
+    let read_cmd = Command::read_file(Path::new("nested/file.txt")).with_current_dir("project");
+    let read_output = executor.exec_cmd(&read_cmd).await.unwrap();
+    assert_eq!(read_output.output, "hello");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_default_workdir_override() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-workdir-override")
+        .with_workdir("/tmp")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let pwd = executor.exec_cmd(&Command::shell("pwd")).await.unwrap();
+    assert_eq!(pwd.to_string(), "/tmp");
+
+    let write_cmd = Command::write_file(Path::new("override.txt"), "contents");
+    executor.exec_cmd(&write_cmd).await.unwrap();
+
+    let read_cmd = Command::read_file(Path::new("override.txt"));
+    let read_output = executor.exec_cmd(&read_cmd).await.unwrap();
+    assert_eq!(read_output.output, "contents");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -206,10 +266,7 @@ async fn test_overrides_include_git_respects_ignore() {
         .await
         .unwrap();
 
-    let ls = executor
-        .exec_cmd(&Command::Shell("ls -aRl".to_string()))
-        .await
-        .unwrap();
+    let ls = executor.exec_cmd(&Command::shell("ls -aRl")).await.unwrap();
 
     eprintln!("Executor LS:\n {ls}");
     assert!(ls.to_string().contains(".git"));
@@ -219,7 +276,7 @@ async fn test_overrides_include_git_respects_ignore() {
 
     // read .git/HEAD to check if git works
     let git_head = executor
-        .exec_cmd(&Command::Shell("cat .git/HEAD".to_string()))
+        .exec_cmd(&Command::shell("cat .git/HEAD"))
         .await
         .unwrap();
 
@@ -227,7 +284,7 @@ async fn test_overrides_include_git_respects_ignore() {
 
     // test git works
     let git_status = executor
-        .exec_cmd(&Command::Shell("git status".to_string()))
+        .exec_cmd(&Command::shell("git status"))
         .await
         .unwrap();
 
@@ -642,7 +699,7 @@ async fn test_docker_logs_in_stdout() {
         .unwrap();
 
     let output = executor
-        .exec_cmd(&Command::Shell("echo hello".to_string()))
+        .exec_cmd(&Command::shell("echo hello"))
         .await
         .unwrap();
 
@@ -813,10 +870,7 @@ async fn test_clear_env() {
         .await
         .unwrap();
 
-    let output = executor
-        .exec_cmd(&Command::Shell("env".to_string()))
-        .await
-        .unwrap();
+    let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // Check that common host env vars are not present
     let env_output = output.to_string();
@@ -838,10 +892,7 @@ async fn test_remove_env() {
         .await
         .unwrap();
 
-    let output = executor
-        .exec_cmd(&Command::Shell("env".to_string()))
-        .await
-        .unwrap();
+    let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // Check that common host env vars are not present
     let env_output = output.to_string();
@@ -865,10 +916,7 @@ async fn test_add_env() {
         .await
         .unwrap();
 
-    let output = executor
-        .exec_cmd(&Command::Shell("env".to_string()))
-        .await
-        .unwrap();
+    let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // Check that common host env vars are not present
     let env_output = output.to_string();
@@ -882,6 +930,53 @@ async fn test_add_env() {
         "ANOTHER_ENV not set"
     );
     assert!(env_output.contains("HOME="), "HOME env not propagated");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_default_timeout_triggers() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-timeout-default")
+        .with_default_timeout(Duration::from_secs(1))
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    assert_eq!(executor.default_timeout, Some(Duration::from_secs(1)));
+
+    let result = executor.exec_cmd(&Command::shell("sleep 5")).await;
+    let err = result.expect_err("command should time out");
+
+    match err {
+        CommandError::TimedOut { timeout, .. } => {
+            assert_eq!(timeout, Duration::from_secs(1));
+        }
+        other => panic!("unexpected error: {other:#}"),
+    }
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_per_command_timeout_overrides_default() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-timeout-override")
+        .with_default_timeout(Duration::from_millis(500))
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    assert_eq!(executor.default_timeout, Some(Duration::from_millis(500)));
+
+    let result = executor
+        .exec_cmd(&Command::shell("sleep 1").with_timeout(Duration::from_secs(2)))
+        .await
+        .unwrap();
+
+    assert!(result.is_empty(), "Expected no output, got: {result}");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -922,9 +1017,7 @@ async fn test_logs_stream_returns_live_log_lines() {
 
     // Generate some logs
     executor
-        .exec_cmd(&Command::Shell(
-            "echo log1 && echo log2 && echo log3".to_string(),
-        ))
+        .exec_cmd(&Command::shell("echo log1 && echo log2 && echo log3"))
         .await
         .unwrap();
 
@@ -981,7 +1074,7 @@ async fn test_background_shell_command_returns_immediately() {
 
     // Should still be able to run foreground commands
     let echo = executor
-        .exec_cmd(&Command::Shell("echo done".to_string()))
+        .exec_cmd(&Command::shell("echo done"))
         .await
         .unwrap();
     assert_eq!(echo.to_string(), "done");
