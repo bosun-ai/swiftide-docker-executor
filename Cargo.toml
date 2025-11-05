@@ -8,8 +8,8 @@ prost = "0.13"
 tonic-build = "0.13"
 tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
-swiftide-core = "0.31"
-swiftide-indexing = "0.31"
+swiftide-core = "0.32"
+swiftide-indexing = "0.32"
 futures-util = "0.3"
 
 [workspace.package]
@@ -25,6 +25,6 @@ version = "0.13.1"
 categories = ["asynchronous"]
 
 [patch.crates-io]
-swiftide-core = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-core", branch = "master" }
-swiftide-indexing = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-indexing", branch = "master" }
-swiftide-agents = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-agents", branch = "master" }
+# swiftide-core = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-core", branch = "master" }
+# swiftide-indexing = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-indexing", branch = "master" }
+# swiftide-agents = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-agents", branch = "master" }
