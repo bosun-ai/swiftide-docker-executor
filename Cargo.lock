@@ -2403,9 +2403,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swiftide-agents"
-version = "0.31.3"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19bae748bd4394bf1aa3afae7832bb8378a11e1dd2c6a01375ce73473b8aa685"
+checksum = "4b2160f0df5640955fbe355456ca78752185213c96e6c85c54fc25a960b74206"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2415,45 +2415,18 @@ dependencies = [
  "fs-err",
  "futures-util",
  "indoc",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "swiftide-core 0.31.3",
- "swiftide-indexing 0.31.3",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "swiftide-core"
-version = "0.31.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c38b3ced6796340d15cb86db05e8c9eb61bfb586987654a2b9b6d0072c7df73"
-dependencies = [
- "anyhow",
- "async-trait",
- "backoff",
- "derive_builder",
- "dyn-clone",
- "futures-util",
- "itertools",
- "lazy_static",
- "pin-project",
  "schemars 1.0.5",
  "serde",
  "serde_json",
  "strum",
  "strum_macros",
- "tera",
+ "swiftide-core",
+ "swiftide-indexing",
  "thiserror",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -2502,7 +2475,7 @@ dependencies = [
  "pretty_assertions",
  "prost 0.13.5",
  "swiftide-agents",
- "swiftide-core 0.32.0",
+ "swiftide-core",
  "tempfile",
  "test-log",
  "thiserror",
@@ -2523,40 +2496,13 @@ version = "0.13.1"
 dependencies = [
  "futures-util",
  "prost 0.13.5",
- "swiftide-core 0.32.0",
- "swiftide-indexing 0.32.0",
+ "swiftide-core",
+ "swiftide-indexing",
  "tokio",
  "tonic 0.13.1",
  "tonic-build",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "swiftide-indexing"
-version = "0.31.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cf2cf291978e6f5cf39c33a05d2bf1d9639370ce57daa049fbe6a204018b3f0"
-dependencies = [
- "anyhow",
- "async-trait",
- "derive_builder",
- "fs-err",
- "futures-util",
- "ignore",
- "indoc",
- "itertools",
- "num_cpus",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "swiftide-core 0.31.3",
- "swiftide-macros 0.31.3",
- "text-splitter",
- "tokio",
- "tokio-stream",
- "tracing",
 ]
 
 [[package]]
@@ -2578,29 +2524,12 @@ dependencies = [
  "serde_json",
  "strum",
  "strum_macros",
- "swiftide-core 0.32.0",
- "swiftide-macros 0.32.0",
+ "swiftide-core",
+ "swiftide-macros",
  "text-splitter",
  "tokio",
  "tokio-stream",
  "tracing",
-]
-
-[[package]]
-name = "swiftide-macros"
-version = "0.31.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae8fe197abcd7087e01ab36f2a82ab9d5e59fa825c617a0511b79f9ec4d008fb"
-dependencies = [
- "anyhow",
- "async-trait",
- "convert_case",
- "darling 0.21.3",
- "proc-macro2",
- "quote",
- "serde",
- "serde_json",
- "syn",
 ]
 
 [[package]]
