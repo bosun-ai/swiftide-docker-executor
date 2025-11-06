@@ -176,12 +176,41 @@ impl RunningDockerExecutor {
         };
 
         if let Some(tmp_dockerfile_name) = tmp_dockerfile_name {
+            let mut removal_targets = vec![tmp_dockerfile_name.clone()];
+
+            if executor.workdir.is_absolute() {
+                removal_targets.push(
+                    executor
+                        .workdir
+                        .join(&tmp_dockerfile_name)
+                        .display()
+                        .to_string(),
+                );
+            }
+
+            let default_workdir = Path::new("/app");
+            if executor.workdir != default_workdir {
+                removal_targets.push(
+                    default_workdir
+                        .join(&tmp_dockerfile_name)
+                        .display()
+                        .to_string(),
+                );
+            }
+
+            removal_targets.sort();
+            removal_targets.dedup();
+
+            let removal_args = removal_targets
+                .iter()
+                .map(|target| format!("{target:?}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            let removal_cmd = format!("rm -f -- {removal_args}");
+
             executor
-                .exec_shell(
-                    &format!("rm {}", tmp_dockerfile_name.as_str()),
-                    &executor.workdir,
-                    executor.default_timeout,
-                )
+                .exec_shell(&removal_cmd, Path::new("/"), executor.default_timeout)
                 .await
                 .context("failed to remove temporary dockerfile")
                 .map_err(DockerExecutorError::Start)?;
