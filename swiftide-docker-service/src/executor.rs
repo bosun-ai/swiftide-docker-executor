@@ -51,8 +51,7 @@ impl ShellExecutor for MyShellExecutor {
             // Don't capture stdout or stderr, and don't wait for child process.
             let mut cmd = Command::new("/bin/bash");
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
-            cmd
-                .arg("--login")
+            cmd.arg("--login")
                 .arg("-c")
                 .arg(command)
                 .current_dir(workdir_path)
@@ -113,9 +112,9 @@ impl ShellExecutor for MyShellExecutor {
 
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
-            cmd
-                .arg("--login")
-                .arg("-c").arg(&command)
+            cmd.arg("--login")
+                .arg("-c")
+                .arg(&command)
                 .current_dir(workdir_path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
