@@ -299,7 +299,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_shell_shebang_env_sh() {
-        let executor = MyShellExecutor::default();
+        let executor = MyShellExecutor;
         let req = ShellRequest {
             command: "#!/usr/bin/env sh\necho shebang-env".to_string(),
             env_clear: false,
@@ -321,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exec_shell_shebang_direct_sh_with_args() {
-        let executor = MyShellExecutor::default();
+        let executor = MyShellExecutor;
         let req = ShellRequest {
             command: "#!/bin/sh -eu\necho direct-sh".to_string(),
             env_clear: false,
@@ -344,7 +344,7 @@ mod tests {
     #[tokio::test]
     async fn test_exec_shell_shebang_python3() {
         // Verify that a non-shell interpreter (python3) is used and executes Python syntax.
-        let executor = MyShellExecutor::default();
+        let executor = MyShellExecutor;
         let req = ShellRequest {
             command: "#!/usr/bin/env python3\nprint('py-ok')".to_string(),
             env_clear: false,
