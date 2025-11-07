@@ -50,12 +50,19 @@ impl ShellExecutor for MyShellExecutor {
 
         if is_background(&command) {
             tracing::info!("Running command in background");
-            // Don't capture stdout or stderr, and don't wait for child process.
-            let mut cmd = Command::new(if has_bash { "/bin/bash" } else { "sh" });
-            if has_bash {
+            let mut cmd = if has_bash {
+                Command::new("/bin/bash")
+            } else {
+                Command::new("sh")
+            };
+
+            if has_bash && !env_clear {
                 cmd.arg("--login");
             }
+
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
+
+            // Don't capture stdout or stderr, and don't wait for child process.
             cmd.arg("-c")
                 .arg(command)
                 .current_dir(workdir_path)
@@ -116,7 +123,7 @@ impl ShellExecutor for MyShellExecutor {
 
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
-            if has_bash {
+            if has_bash && !env_clear {
                 cmd.arg("--login");
             }
             cmd.arg("-c")
