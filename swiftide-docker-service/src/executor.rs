@@ -50,12 +50,7 @@ impl ShellExecutor for MyShellExecutor {
 
         if is_background(&command) {
             tracing::info!("Running command in background");
-            let mut cmd = if has_bash {
-                Command::new("/bin/bash")
-            } else {
-                Command::new("sh")
-            };
-
+            let mut cmd = Command::new(if has_bash { "/bin/bash" } else { "sh" });
             if has_bash {
                 cmd.arg("--login");
             }
