@@ -273,8 +273,8 @@ fn merge_output(stdout: &str, stderr: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{codegen::ShellRequest, MyShellExecutor, is_background};
     use super::codegen::shell_executor_server::ShellExecutor;
+    use super::{MyShellExecutor, codegen::ShellRequest, is_background};
     use tonic::Request;
 
     #[test]
@@ -309,7 +309,11 @@ mod tests {
             cwd: None,
         };
 
-        let resp = executor.exec_shell(Request::new(req)).await.unwrap().into_inner();
+        let resp = executor
+            .exec_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
         assert_eq!(resp.exit_code, 0);
         assert_eq!(resp.stdout.trim(), "shebang-env");
         assert!(resp.stderr.trim().is_empty());
@@ -327,7 +331,11 @@ mod tests {
             cwd: None,
         };
 
-        let resp = executor.exec_shell(Request::new(req)).await.unwrap().into_inner();
+        let resp = executor
+            .exec_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
         assert_eq!(resp.exit_code, 0);
         assert_eq!(resp.stdout.trim(), "direct-sh");
         assert!(resp.stderr.trim().is_empty());
@@ -346,7 +354,11 @@ mod tests {
             cwd: None,
         };
 
-        let resp = executor.exec_shell(Request::new(req)).await.unwrap().into_inner();
+        let resp = executor
+            .exec_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
         assert_eq!(resp.exit_code, 0);
         assert_eq!(resp.stdout.trim(), "py-ok");
         assert!(resp.stderr.trim().is_empty());
