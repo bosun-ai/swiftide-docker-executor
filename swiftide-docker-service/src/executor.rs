@@ -56,7 +56,7 @@ impl ShellExecutor for MyShellExecutor {
                 Command::new("sh")
             };
 
-            if has_bash && !env_clear {
+            if has_bash {
                 cmd.arg("--login");
             }
 
@@ -123,7 +123,7 @@ impl ShellExecutor for MyShellExecutor {
 
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
-            if has_bash && !env_clear {
+            if has_bash {
                 cmd.arg("--login");
             }
             cmd.arg("-c")
