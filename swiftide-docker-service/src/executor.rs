@@ -81,10 +81,14 @@ impl ShellExecutor for MyShellExecutor {
         let mut child = if let Some(first_line) = lines.first()
             && first_line.starts_with("#!")
         {
-            let interpreter = first_line.trim_start_matches("#!/usr/bin/env ").trim();
-            tracing::info!(interpreter, "detected shebang; running as script");
+            let shebang = first_line.trim_start_matches("#!").trim();
+            let mut parts = shebang.split_whitespace();
+            let interpreter = parts.next().unwrap_or("");
+            let args: Vec<&str> = parts.collect();
+            tracing::info!(interpreter, args = ?args, "detected shebang; running as script");
 
             let mut cmd = Command::new(interpreter);
+            cmd.args(&args);
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
             let mut child = cmd
@@ -269,7 +273,9 @@ fn merge_output(stdout: &str, stderr: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::is_background;
+    use super::{codegen::ShellRequest, MyShellExecutor, is_background};
+    use super::codegen::shell_executor_server::ShellExecutor;
+    use tonic::Request;
 
     #[test]
     fn test_is_background_basic() {
@@ -289,5 +295,60 @@ mod tests {
     #[test]
     fn test_is_not_background() {
         assert!(!is_background("echo hello"));
+    }
+
+    #[tokio::test]
+    async fn test_exec_shell_shebang_env_sh() {
+        let executor = MyShellExecutor::default();
+        let req = ShellRequest {
+            command: "#!/usr/bin/env sh\necho shebang-env".to_string(),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+        };
+
+        let resp = executor.exec_shell(Request::new(req)).await.unwrap().into_inner();
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "shebang-env");
+        assert!(resp.stderr.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_exec_shell_shebang_direct_sh_with_args() {
+        let executor = MyShellExecutor::default();
+        let req = ShellRequest {
+            command: "#!/bin/sh -eu\necho direct-sh".to_string(),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+        };
+
+        let resp = executor.exec_shell(Request::new(req)).await.unwrap().into_inner();
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "direct-sh");
+        assert!(resp.stderr.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_exec_shell_shebang_python3() {
+        // Verify that a non-shell interpreter (python3) is used and executes Python syntax.
+        let executor = MyShellExecutor::default();
+        let req = ShellRequest {
+            command: "#!/usr/bin/env python3\nprint('py-ok')".to_string(),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+        };
+
+        let resp = executor.exec_shell(Request::new(req)).await.unwrap().into_inner();
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "py-ok");
+        assert!(resp.stderr.trim().is_empty());
     }
 }
