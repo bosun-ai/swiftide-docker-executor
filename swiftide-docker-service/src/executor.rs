@@ -49,9 +49,11 @@ impl ShellExecutor for MyShellExecutor {
         if is_background(&command) {
             tracing::info!("Running command in background");
             // Don't capture stdout or stderr, and don't wait for child process.
-            let mut cmd = Command::new("sh");
+            let mut cmd = Command::new("/bin/bash");
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
-            cmd.arg("-c")
+            cmd
+                .arg("--login")
+                .arg("-c")
                 .arg(command)
                 .current_dir(workdir_path)
                 .stdin(Stdio::null())
@@ -107,11 +109,13 @@ impl ShellExecutor for MyShellExecutor {
         } else {
             tracing::info!("no shebang detected; running as command");
 
-            let mut cmd = Command::new("sh");
+            let mut cmd = Command::new("/bin/bash");
+
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
-            cmd.arg("-c")
-                .arg(&command)
+            cmd
+                .arg("--login")
+                .arg("-c").arg(&command)
                 .current_dir(workdir_path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())

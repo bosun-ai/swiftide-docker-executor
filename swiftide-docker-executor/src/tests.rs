@@ -61,6 +61,33 @@ async fn test_runs_docker_and_echos() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_shell_reads_etc_profile() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-etc-profile")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    // Append a marker export to /etc/profile inside the container
+    let append_cmd = r#"printf '\nexport PROFILE_MARKER=from_profile\n' >> /etc/profile && tail -n 5 /etc/profile"#;
+    let _ = executor
+        .exec_cmd(&Command::shell(append_cmd))
+        .await
+        .unwrap();
+
+    // Now run a simple shell command that should see the marker via login shell
+    let output = executor
+        .exec_cmd(&Command::shell("echo $PROFILE_MARKER"))
+        .await
+        .unwrap();
+
+    assert_eq!(output.to_string(), "from_profile");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_runs_on_alpine() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE_ALPINE)
