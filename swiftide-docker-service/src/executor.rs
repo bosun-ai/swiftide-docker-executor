@@ -46,13 +46,17 @@ impl ShellExecutor for MyShellExecutor {
         let workdir = cwd.unwrap_or_else(|| ".".to_string());
         let workdir_path = Path::new(&workdir);
 
+        let has_bash = Path::new("/bin/bash").exists();
+
         if is_background(&command) {
             tracing::info!("Running command in background");
             // Don't capture stdout or stderr, and don't wait for child process.
-            let mut cmd = Command::new("/bin/bash");
+            let mut cmd = Command::new(if has_bash { "/bin/bash" } else { "sh" });
+            if has_bash {
+                cmd.arg("--login");
+            }
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
-            cmd.arg("--login")
-                .arg("-c")
+            cmd.arg("-c")
                 .arg(command)
                 .current_dir(workdir_path)
                 .stdin(Stdio::null())
@@ -108,12 +112,14 @@ impl ShellExecutor for MyShellExecutor {
         } else {
             tracing::info!("no shebang detected; running as command");
 
-            let mut cmd = Command::new("/bin/bash");
+            let mut cmd = Command::new(if has_bash { "/bin/bash" } else { "sh" });
 
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
-            cmd.arg("--login")
-                .arg("-c")
+            if has_bash {
+                cmd.arg("--login");
+            }
+            cmd.arg("-c")
                 .arg(&command)
                 .current_dir(workdir_path)
                 .stdin(Stdio::null())
