@@ -61,6 +61,33 @@ async fn test_runs_docker_and_echos() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_shell_reads_etc_profile() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-etc-profile")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    // Append a marker export to /etc/profile inside the container
+    let append_cmd = r#"printf '\nexport PROFILE_MARKER=from_profile\n' >> /etc/profile && tail -n 5 /etc/profile"#;
+    let _ = executor
+        .exec_cmd(&Command::shell(append_cmd))
+        .await
+        .unwrap();
+
+    // Now run a simple shell command that should see the marker via login shell
+    let output = executor
+        .exec_cmd(&Command::shell("echo $PROFILE_MARKER"))
+        .await
+        .unwrap();
+
+    assert_eq!(output.to_string(), "from_profile");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_runs_on_alpine() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE_ALPINE)
@@ -872,12 +899,36 @@ async fn test_clear_env() {
 
     let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
-    // Check that common host env vars are not present
+    // TEST_VAR is set via Dockerfile.tests; with clear_env it should be absent
     let env_output = output.to_string();
     dbg!(&env_output);
-    assert!(!env_output.contains("HOME="), "HOME env propagated");
-    assert!(!env_output.contains("HOSTNAME="), "HOSTNAME env propagated");
-    assert!(!env_output.contains("PATH="), "PATH env propagated");
+    assert!(
+        !env_output.contains("TEST_VAR=test"),
+        "TEST_VAR should be cleared when clear_env is set"
+    );
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_no_clear_env() {
+    // test that common host env vars are set in the container
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-no-env")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
+
+    // TEST_VAR is set via Dockerfile.tests; without clear_env it should be present
+    let env_output = output.to_string();
+    dbg!(&env_output);
+    assert!(
+        env_output.contains("TEST_VAR=test"),
+        "TEST_VAR should be present without clear_env"
+    );
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]

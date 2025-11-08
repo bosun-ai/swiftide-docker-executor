@@ -11,3 +11,4 @@ COPY . /app
 
 WORKDIR /app/
 
+ENV TEST_VAR="test"
