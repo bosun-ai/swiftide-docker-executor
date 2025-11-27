@@ -9,11 +9,11 @@ use bollard::{
 use crate::client::Client;
 
 pub struct ContainerConfigurator {
-    socket_path: String,
+    socket_path: Option<String>,
 }
 
 impl ContainerConfigurator {
-    pub fn new(socket_path: String) -> Self {
+    pub fn new(socket_path: Option<String>) -> Self {
         Self { socket_path }
     }
 
@@ -57,7 +57,11 @@ impl ContainerConfigurator {
             networking_config: network_config,
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
-                binds: Some(vec![format!("{}:/var/run/docker.sock", self.socket_path)]),
+                binds: if let Some(socket_path) = self.socket_path.as_ref() {
+                    Some(vec![format!("{}:/var/run/docker.sock", socket_path)])
+                } else {
+                    None
+                },
                 port_bindings: Some(port_bindings),
                 network_mode: maybe_network.clone(),
                 ..Default::default()

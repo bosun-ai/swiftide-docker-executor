@@ -19,15 +19,19 @@ const DEFAULT_DOCKER_SOCKET: &str = "/var/run/docker.sock";
 #[derive(Debug)]
 pub struct Client {
     bollard_client: bollard::Docker,
-    pub socket_path: String,
+    pub socket_path: Option<String>,
 }
 
 impl Client {
     pub(crate) fn new() -> Result<Self, ClientError> {
         let socket_path = get_socket_path();
-        let bollard_client =
-            bollard::Docker::connect_with_socket(&socket_path, 600, bollard::API_DEFAULT_VERSION)
-                .map_err(ClientError::Init)?;
+
+        let bollard_client = if let Some(socket_path) = &socket_path {
+            bollard::Docker::connect_with_socket(socket_path, 600, bollard::API_DEFAULT_VERSION)
+                .map_err(ClientError::Init)?
+        } else {
+            bollard::Docker::connect_with_defaults().map_err(ClientError::Init)?
+        };
 
         Ok(Self {
             bollard_client,
@@ -63,8 +67,8 @@ impl Deref for Client {
 
 /// Lovingly copied from testcontainers-rs
 /// Reliably gets the path to the docker socket
-fn get_socket_path() -> String {
-    validate_path("/var/run/docker.sock".into())
+fn get_socket_path() -> Option<String> {
+    validate_path(DEFAULT_DOCKER_SOCKET.into())
         .or_else(|| {
             runtime_dir()
                 .and_then(|dir| validate_path(format!("{}/.docker/run/docker.sock", dir.display())))
@@ -78,7 +82,6 @@ fn get_socket_path() -> String {
                 validate_path(format!("{}/.docker/desktop/docker.sock", dir.display()))
             })
         })
-        .unwrap_or(DEFAULT_DOCKER_SOCKET.into())
 }
 
 fn validate_path(path: String) -> Option<String> {
