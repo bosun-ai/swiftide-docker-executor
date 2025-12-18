@@ -2511,6 +2511,7 @@ dependencies = [
  "prost 0.13.5",
  "swiftide-core",
  "swiftide-indexing",
+ "tempfile",
  "tokio",
  "tonic 0.13.1",
  "tonic-build",
