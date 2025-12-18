@@ -37,9 +37,10 @@ futures-util = "0.3"
 
 tonic.workspace = true
 prost.workspace = true
+tonic-prost.workspace = true
 
 [build-dependencies]
-tonic-build = { workspace = true }
+tonic-prost-build = { workspace = true }
 
 
 [dev-dependencies]
