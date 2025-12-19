@@ -12,21 +12,17 @@ allow = [
   "MPL-2.0",
   "Apache-2.0 WITH LLVM-exception",
   "Unlicense",
-  "CC0-1.0",
-  "zlib-acknowledgement",
   "Zlib",
   "0BSD",
   "Unicode-3.0",
   "CDLA-Permissive-2.0",
 ]
-exceptions = [{ allow = ["OpenSSL"], crate = "ring" }]
 
 [advisories]
 version = 2
 ignore = [
-  { id = "RUSTSEC-2023-0086", reason = "Ignore a security adivisory on lexical-core" },
+  { id = "RUSTSEC-2025-0134", reason = "Rustls pemfile is unmainted, but still secure" },
   { id = "RUSTSEC-2024-0384", reason = "Instant is unmaintained" },
-  { id = "RUSTSEC-2024-0320", reason = "Yaml rust is unmaintained, used by syntect" },
   { id = "RUSTSEC-2025-0012", reason = "Backoff is unmaintained" },
 ]
 

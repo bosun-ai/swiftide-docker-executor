@@ -1072,8 +1072,9 @@ async fn test_logs_stream_returns_live_log_lines() {
         .await
         .unwrap();
 
-    // Give some time for the logs to be processed
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Give some time for the logs to be processed; newer tonic/prost versions
+    // buffer a bit more, so wait a little longer to let lines flush.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // The log task won't complete unless we stop the executor
     let _ = executor.shutdown().await;
