@@ -90,11 +90,28 @@ impl ShellExecutor for MyShellExecutor {
         {
             let shebang = first_line.trim_start_matches("#!").trim();
             let mut parts = shebang.split_whitespace();
-            let interpreter = parts.next().unwrap_or("");
-            let args: Vec<&str> = parts.collect();
+            let interpreter = parts.next().unwrap_or("").to_string();
+            let args: Vec<String> = parts.map(|s| s.to_string()).collect();
+
             tracing::info!(interpreter, args = ?args, "detected shebang; running as script");
 
-            let mut cmd = Command::new(interpreter);
+            // Run interpreter from within a login shell so profile files are honored,
+            // while still executing the original shebang interpreter (python, sh, etc.).
+            let mut cmd = Command::new(if has_bash { "/bin/bash" } else { "sh" });
+            if has_bash {
+                cmd.arg("--login");
+                cmd.arg("-c");
+                cmd.arg("exec \"$@\"");
+                cmd.arg("bash"); // $0 for -c
+            } else {
+                // Many /bin/sh implementations accept -l for login shells.
+                cmd.arg("-l");
+                cmd.arg("-c");
+                cmd.arg("exec \"$@\"");
+                cmd.arg("sh");
+            }
+
+            cmd.arg(&interpreter);
             cmd.args(&args);
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
@@ -286,6 +303,9 @@ fn merge_output(stdout: &str, stderr: &str) -> String {
 mod tests {
     use super::codegen::shell_executor_server::ShellExecutor;
     use super::{MyShellExecutor, codegen::ShellRequest, is_background};
+    use std::fs;
+    use std::path::Path;
+    use tempfile::tempdir;
     use tonic::Request;
 
     #[test]
@@ -372,6 +392,43 @@ mod tests {
             .into_inner();
         assert_eq!(resp.exit_code, 0);
         assert_eq!(resp.stdout.trim(), "py-ok");
+        assert!(resp.stderr.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_exec_shell_shebang_bash_login_shell() {
+        // The shebang path should be executed as a login shell so profile files are honored.
+        if !Path::new("/bin/bash").exists() {
+            return;
+        }
+
+        let home = tempdir().unwrap();
+        fs::write(
+            home.path().join(".bash_profile"),
+            "export LOGIN_MARK=from_profile\n",
+        )
+        .unwrap();
+
+        let executor = MyShellExecutor;
+        let req = ShellRequest {
+            command: "#!/bin/bash\nprintf \"%s\" \"${LOGIN_MARK:-missing}\"".to_string(),
+            env_clear: false,
+            env_remove: vec![],
+            envs: [("HOME".into(), home.path().to_string_lossy().into_owned())]
+                .into_iter()
+                .collect(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+        };
+
+        let resp = executor
+            .exec_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout, "from_profile");
         assert!(resp.stderr.trim().is_empty());
     }
 }

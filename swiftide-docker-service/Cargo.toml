@@ -30,3 +30,6 @@ tonic-prost-build = { workspace = true }
 [features]
 default = ["file-loader"]
 file-loader = ["dep:swiftide-indexing", "dep:swiftide-core"]
+
+[dev-dependencies]
+tempfile = "3"
