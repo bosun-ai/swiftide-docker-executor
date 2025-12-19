@@ -21,7 +21,7 @@ allow = [
 [advisories]
 version = 2
 ignore = [
-  { id = "RUSTSEC-2025-0134", reason = "Rustls pemfile is unmainted, but still secure" },
+  { id = "RUSTSEC-2025-0134", reason = "Rustls pemfile is unmaintained, but still secure" },
   { id = "RUSTSEC-2024-0384", reason = "Instant is unmaintained" },
   { id = "RUSTSEC-2025-0012", reason = "Backoff is unmaintained" },
 ]
