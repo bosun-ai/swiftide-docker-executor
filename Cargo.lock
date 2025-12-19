@@ -2486,6 +2486,7 @@ name = "swiftide-docker-service"
 version = "0.13.3"
 dependencies = [
  "futures-util",
+ "indoc",
  "prost",
  "swiftide-core",
  "swiftide-indexing",

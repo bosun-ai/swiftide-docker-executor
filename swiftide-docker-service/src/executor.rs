@@ -303,6 +303,7 @@ fn merge_output(stdout: &str, stderr: &str) -> String {
 mod tests {
     use super::codegen::shell_executor_server::ShellExecutor;
     use super::{MyShellExecutor, codegen::ShellRequest, is_background};
+    use indoc::indoc;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
@@ -392,6 +393,46 @@ mod tests {
             .into_inner();
         assert_eq!(resp.exit_code, 0);
         assert_eq!(resp.stdout.trim(), "py-ok");
+        assert!(resp.stderr.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_exec_shell_shebang_python3_multiline() {
+        // Ensure multi-line Python scripts keep their body intact when piped to the interpreter.
+        let executor = MyShellExecutor;
+        let command = indoc! {r#"
+            #!/usr/bin/env python3
+            import sys
+
+
+
+
+            def add(a, b):
+                return a + b
+
+
+            if __name__ == "__main__":
+                print(add(2, 3))
+                for i in range(2):
+                    print(f"line-{i}")
+        "#};
+        let req = ShellRequest {
+            command: command.to_string(),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+        };
+
+        let resp = executor
+            .exec_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "5\nline-0\nline-1");
         assert!(resp.stderr.trim().is_empty());
     }
 
