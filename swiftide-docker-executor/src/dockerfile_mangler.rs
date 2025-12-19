@@ -33,8 +33,7 @@ pub async fn mangle(path: &Path) -> Result<MangledDockerfile, MangleError> {
     let insert_pos = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| line.trim_start().to_lowercase().starts_with("from"))
-        .next_back()
+        .rfind(|(_, line)| line.trim_start().to_lowercase().starts_with("from"))
         .map(|(idx, _)| idx)
         .ok_or(MangleError::InvalidDockerfile)?
         + 1;
