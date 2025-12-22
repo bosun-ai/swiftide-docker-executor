@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+use tokio::io::AsyncBufReadExt as _;
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 use tokio::time;
@@ -85,18 +87,29 @@ impl ShellExecutor for MyShellExecutor {
         }
 
         let lines: Vec<&str> = command.lines().collect();
+        let mut temp_script: Option<tempfile::TempPath> = None;
         let mut child = if let Some(first_line) = lines.first()
             && first_line.starts_with("#!")
         {
-            let shebang = first_line.trim_start_matches("#!").trim();
-            let mut parts = shebang.split_whitespace();
-            let interpreter = parts.next().unwrap_or("").to_string();
-            let args: Vec<String> = parts.map(|s| s.to_string()).collect();
+            tracing::info!("detected shebang; running as script");
 
-            tracing::info!(interpreter, args = ?args, "detected shebang; running as script");
+            let mut script = tempfile::Builder::new()
+                .prefix("swiftide-script-")
+                .tempfile_in("/tmp")
+                .map_err(|e| Status::internal(format!("Failed to create temp script: {e:?}")))?;
+            script
+                .write_all(command.as_bytes())
+                .map_err(|e| Status::internal(format!("Failed to write temp script: {e:?}")))?;
+            let permissions = std::fs::Permissions::from_mode(0o755);
+            script.as_file().set_permissions(permissions).map_err(|e| {
+                Status::internal(format!("Failed to set script permissions: {e:?}"))
+            })?;
+            let script_path = script.path().to_path_buf();
+            let script_path_guard = script.into_temp_path();
+            temp_script = Some(script_path_guard);
 
             // Run interpreter from within a login shell so profile files are honored,
-            // while still executing the original shebang interpreter (python, sh, etc.).
+            // while still executing the original shebang interpreter via the script file.
             let mut cmd = Command::new(if has_bash { "/bin/bash" } else { "sh" });
             if has_bash {
                 cmd.arg("--login");
@@ -111,23 +124,14 @@ impl ShellExecutor for MyShellExecutor {
                 cmd.arg("sh");
             }
 
-            cmd.arg(&interpreter);
-            cmd.args(&args);
+            cmd.arg(&script_path);
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
-            let mut child = cmd
-                .current_dir(workdir_path)
-                .stdin(Stdio::piped())
+            cmd.current_dir(workdir_path)
+                .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .spawn()?;
-
-            if let Some(mut stdin) = child.stdin.take() {
-                let body = lines[1..].join("\n");
-                stdin.write_all(body.as_bytes()).await?;
-            }
-
-            child
+                .spawn()?
         } else {
             tracing::info!("no shebang detected; running as command");
 
@@ -209,6 +213,7 @@ impl ShellExecutor for MyShellExecutor {
                         format!("Command timed out after {limit:?}: {combined}")
                     };
 
+                    drop(temp_script);
                     return Err(Status::deadline_exceeded(message));
                 }
             },
@@ -217,6 +222,8 @@ impl ShellExecutor for MyShellExecutor {
                 Status::internal(format!("Failed to wait for command: {e:?}"))
             })?,
         };
+
+        drop(temp_script);
 
         let (stdout_lines, stderr_lines) = collect_process_output(stdout_task, stderr_task).await;
         let stdout = stdout_lines.join("\n");

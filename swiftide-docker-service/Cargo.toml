@@ -20,6 +20,7 @@ tonic-prost.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3" }
 futures-util.workspace = true
+tempfile = "3"
 
 swiftide-indexing = { workspace = true, optional = true }
 swiftide-core = { workspace = true, optional = true }
@@ -32,5 +33,4 @@ default = ["file-loader"]
 file-loader = ["dep:swiftide-indexing", "dep:swiftide-core"]
 
 [dev-dependencies]
-tempfile = "3"
 indoc = "2"
