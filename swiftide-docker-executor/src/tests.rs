@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use bollard::{query_parameters::InspectContainerOptions, secret::ContainerStateStatusEnum};
+use bollard::{models::ContainerStateStatusEnum, query_parameters::InspectContainerOptions};
 use swiftide_core::{Command, CommandError, Loader as _, ToolExecutor as _, indexing::TextNode};
 use tokio_stream::StreamExt as _;
 

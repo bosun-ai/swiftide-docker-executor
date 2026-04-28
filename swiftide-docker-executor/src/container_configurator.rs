@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use bollard::{
-    models::ContainerCreateBody,
+    models::{ContainerCreateBody, EndpointSettings, NetworkingConfig, PortBinding},
     query_parameters::InspectContainerOptions,
-    secret::{EndpointSettings, NetworkingConfig, PortBinding},
 };
 
 use crate::client::Client;
@@ -32,9 +31,7 @@ impl ContainerConfigurator {
             }]),
         )]);
 
-        let empty = HashMap::<(), ()>::new();
-        let mut exposed_ports = HashMap::new();
-        exposed_ports.insert("50051/tcp".to_string(), empty);
+        let exposed_ports = vec![internal_port.to_string()];
 
         // Check if we're running inside a container and try to get the network name
         let mut network_config = None;
@@ -57,11 +54,10 @@ impl ContainerConfigurator {
             networking_config: network_config,
             host_config: Some(bollard::models::HostConfig {
                 auto_remove: Some(true),
-                binds: if let Some(socket_path) = self.socket_path.as_ref() {
-                    Some(vec![format!("{}:/var/run/docker.sock", socket_path)])
-                } else {
-                    None
-                },
+                binds: self
+                    .socket_path
+                    .as_ref()
+                    .map(|socket_path| vec![format!("{}:/var/run/docker.sock", socket_path)]),
                 port_bindings: Some(port_bindings),
                 network_mode: maybe_network.clone(),
                 ..Default::default()

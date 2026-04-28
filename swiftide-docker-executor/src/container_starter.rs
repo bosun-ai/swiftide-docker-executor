@@ -3,10 +3,10 @@ use std::str::FromStr;
 use std::{sync::Arc, time::Duration};
 
 use bollard::{
+    models::ContainerCreateBody,
     query_parameters::{
         CreateContainerOptions, InspectContainerOptions, LogsOptions, StartContainerOptions,
     },
-    secret::ContainerCreateBody,
 };
 use swiftide_core::prelude::StreamExt as _;
 use uuid::Uuid;

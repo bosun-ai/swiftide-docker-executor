@@ -1,8 +1,8 @@
 use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
+    models::{ContainerState, ContainerStateStatusEnum},
     query_parameters::{InspectContainerOptions, KillContainerOptions, RemoveContainerOptions},
-    secret::{ContainerState, ContainerStateStatusEnum},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
 use futures_util::Stream;
