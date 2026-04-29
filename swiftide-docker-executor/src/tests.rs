@@ -730,11 +730,10 @@ async fn test_docker_logs_in_stdout() {
         .await
         .unwrap();
 
-    dbg!(output.to_string());
-
-    let logs = executor.logs().await.unwrap();
+    assert_eq!(output.to_string(), "hello");
 
     let expected = "stdout: hello";
+    let logs = wait_for_log_line(&executor, expected).await;
     assert!(
         logs.iter().any(|l| l.contains(expected)),
         "Logs:\n {}",
@@ -1087,6 +1086,21 @@ async fn test_logs_stream_returns_live_log_lines() {
         log_joined.contains("log1") && log_joined.contains("log2") && log_joined.contains("log3"),
         "Expected logs not found in streamed output: {log_joined:?}"
     );
+}
+
+async fn wait_for_log_line(executor: &crate::RunningDockerExecutor, expected: &str) -> Vec<String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+
+    loop {
+        let logs = executor.logs().await.unwrap();
+        if logs.iter().any(|line| line.contains(expected))
+            || tokio::time::Instant::now() >= deadline
+        {
+            return logs;
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
