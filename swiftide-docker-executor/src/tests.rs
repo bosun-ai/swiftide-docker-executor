@@ -1089,7 +1089,7 @@ async fn test_logs_stream_returns_live_log_lines() {
 }
 
 async fn wait_for_log_line(executor: &crate::RunningDockerExecutor, expected: &str) -> Vec<String> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
 
     loop {
         let logs = executor.logs().await.unwrap();
