@@ -108,23 +108,20 @@ impl ShellExecutor for MyShellExecutor {
             let script_path_guard = script.into_temp_path();
             temp_script = Some(script_path_guard);
 
-            // Run interpreter from within a login shell so profile files are honored,
-            // while still executing the original shebang interpreter via the script file.
-            let mut cmd = Command::new(if has_bash { "/bin/bash" } else { "sh" });
-            if has_bash {
+            let mut cmd = if has_bash && is_bash_shebang(first_line) {
+                // Bash scripts should run as login shells so profile files are honored.
+                let mut cmd = Command::new("/bin/bash");
                 cmd.arg("--login");
-                cmd.arg("-c");
-                cmd.arg("exec \"$@\"");
-                cmd.arg("bash"); // $0 for -c
+                if let Some(args) = shebang_args(first_line) {
+                    cmd.args(args);
+                }
+                cmd.arg(&script_path);
+                cmd
             } else {
-                // Many /bin/sh implementations accept -l for login shells.
-                cmd.arg("-l");
-                cmd.arg("-c");
-                cmd.arg("exec \"$@\"");
-                cmd.arg("sh");
-            }
+                // Non-bash shebangs should be executed by their declared interpreter directly.
+                Command::new(&script_path)
+            };
 
-            cmd.arg(&script_path);
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
             cmd.current_dir(workdir_path)
@@ -266,6 +263,36 @@ fn apply_env_settings(
 fn is_background(cmd: &str) -> bool {
     let trimmed = cmd.trim_end();
     trimmed.ends_with('&') && !trimmed.ends_with("\\&")
+}
+
+fn is_bash_shebang(line: &str) -> bool {
+    let Some(command) = line.strip_prefix("#!") else {
+        return false;
+    };
+
+    let mut parts = command.split_whitespace();
+    match (parts.next(), parts.next()) {
+        (Some(interpreter), _) if interpreter.ends_with("/bash") || interpreter == "bash" => true,
+        (Some(interpreter), Some(program))
+            if interpreter.ends_with("/env")
+                && (program == "bash" || program.ends_with("/bash")) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn shebang_args(line: &str) -> Option<impl Iterator<Item = &str>> {
+    let command = line.strip_prefix("#!")?;
+    let mut parts = command.split_whitespace();
+    let interpreter = parts.next()?;
+
+    if interpreter.ends_with("/env") {
+        let _program = parts.next()?;
+    }
+
+    Some(parts)
 }
 
 async fn collect_process_output(
