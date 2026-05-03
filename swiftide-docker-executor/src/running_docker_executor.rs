@@ -432,20 +432,23 @@ impl RunningDockerExecutor {
         let write_file_result = self.exec_shell(&cmd, workdir, timeout).await;
 
         // If the directory or file does not exist, create it
-        if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result
-            && [
+        if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result {
+            let output = format!("{}\n{}", write_file.stdout, write_file.stderr).to_lowercase();
+            let missing_path = [
                 "no such file or directory",
                 "directory nonexistent",
                 "nonexistent directory",
             ]
             .iter()
-            .any(|&s| write_file.output.to_lowercase().contains(s))
-        {
-            let path = path.parent().context("No parent directory")?;
-            let mkdircmd = format!("mkdir -p {}", path.display());
-            let _ = self.exec_shell(&mkdircmd, workdir, timeout).await?;
+            .any(|&s| output.contains(s));
 
-            return self.exec_shell(&cmd, workdir, timeout).await;
+            if missing_path {
+                let path = path.parent().context("No parent directory")?;
+                let mkdircmd = format!("mkdir -p {}", path.display());
+                let _ = self.exec_shell(&mkdircmd, workdir, timeout).await?;
+
+                return self.exec_shell(&cmd, workdir, timeout).await;
+            }
         }
 
         write_file_result
