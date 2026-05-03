@@ -30,14 +30,36 @@ async fn test_runs_docker_and_echos() {
         .await
         .unwrap();
 
-    assert_eq!(output.to_string(), "hello");
+    assert_eq!(output.stdout, "hello");
+    assert_eq!(output.stderr, "");
+
+    let output = executor
+        .exec_cmd(&Command::shell("printf stdout; printf stderr >&2"))
+        .await
+        .unwrap();
+
+    assert_eq!(output.stdout, "stdout");
+    assert_eq!(output.stderr, "stderr");
+
+    let error = executor
+        .exec_cmd(&Command::shell(
+            "printf failed-out; printf failed-err >&2; exit 7",
+        ))
+        .await
+        .unwrap_err();
+
+    let CommandError::NonZeroExit(output) = error else {
+        panic!("expected non-zero exit");
+    };
+    assert_eq!(output.stdout, "failed-out");
+    assert_eq!(output.stderr, "failed-err");
 
     let output = executor
         .exec_cmd(&Command::shell("which rg"))
         .await
         .unwrap();
 
-    assert_eq!(output.to_string(), "/usr/bin/rg");
+    assert_eq!(output.stdout, "/usr/bin/rg");
 
     let output = executor
         .exec_cmd(&Command::shell("rg Cargo.toml"))
@@ -45,7 +67,7 @@ async fn test_runs_docker_and_echos() {
         .unwrap();
 
     assert!(
-        output.to_string().contains("src/tests.rs"),
+        output.stdout.contains("src/tests.rs"),
         "{output} does not contain expected path"
     );
 
@@ -55,7 +77,7 @@ async fn test_runs_docker_and_echos() {
         .unwrap();
 
     assert!(
-        output.to_string().contains("Cargo.toml"),
+        output.stdout.contains("Cargo.toml"),
         "{output} does not contain expected path"
     );
 }
@@ -84,7 +106,7 @@ async fn test_shell_reads_etc_profile() {
         .await
         .unwrap();
 
-    assert_eq!(output.to_string(), "from_profile");
+    assert_eq!(output.stdout, "from_profile");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -105,14 +127,14 @@ async fn test_runs_on_alpine() {
         .await
         .unwrap();
 
-    assert_eq!(output.to_string(), "hello");
+    assert_eq!(output.stdout, "hello");
 
     let output = executor
         .exec_cmd(&Command::shell("which rg"))
         .await
         .unwrap();
 
-    assert_eq!(output.to_string(), "/usr/bin/rg");
+    assert_eq!(output.stdout, "/usr/bin/rg");
 
     let output = executor
         .exec_cmd(&Command::shell("rg Cargo.toml"))
@@ -120,7 +142,7 @@ async fn test_runs_on_alpine() {
         .unwrap();
 
     assert!(
-        output.to_string().contains("src/tests.rs"),
+        output.stdout.contains("src/tests.rs"),
         "{output} does not contain expected path"
     );
 
@@ -130,7 +152,7 @@ async fn test_runs_on_alpine() {
         .unwrap();
 
     assert!(
-        output.to_string().contains("Cargo.toml"),
+        output.stdout.contains("Cargo.toml"),
         "{output} does not contain expected path"
     );
 }
@@ -148,7 +170,7 @@ async fn test_context_present() {
     let ls = executor.exec_cmd(&Command::shell("ls -a")).await.unwrap();
 
     assert!(
-        ls.to_string().contains("Cargo.toml"),
+        ls.stdout.contains("Cargo.toml"),
         "Context did not contain `Cargo.toml`, actual:\n {ls}"
     );
 }
@@ -165,7 +187,7 @@ async fn test_current_dir_resolution() {
         .unwrap();
 
     let default_pwd = executor.exec_cmd(&Command::shell("pwd")).await.unwrap();
-    assert_eq!(default_pwd.to_string(), "/app");
+    assert_eq!(default_pwd.stdout, "/app");
 
     executor
         .exec_cmd(&Command::shell("mkdir -p project"))
@@ -176,13 +198,13 @@ async fn test_current_dir_resolution() {
         .exec_cmd(&Command::shell("pwd").with_current_dir("project"))
         .await
         .unwrap();
-    assert_eq!(relative_pwd.to_string(), "/app/project");
+    assert_eq!(relative_pwd.stdout, "/app/project");
 
     let absolute_pwd = executor
         .exec_cmd(&Command::shell("pwd").with_current_dir("/tmp"))
         .await
         .unwrap();
-    assert_eq!(absolute_pwd.to_string(), "/tmp");
+    assert_eq!(absolute_pwd.stdout, "/tmp");
 
     let write_cmd =
         Command::write_file(Path::new("nested/file.txt"), "hello").with_current_dir("project");
@@ -190,7 +212,7 @@ async fn test_current_dir_resolution() {
 
     let read_cmd = Command::read_file(Path::new("nested/file.txt")).with_current_dir("project");
     let read_output = executor.exec_cmd(&read_cmd).await.unwrap();
-    assert_eq!(read_output.output, "hello");
+    assert_eq!(read_output.stdout, "hello");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -206,14 +228,14 @@ async fn test_default_workdir_override() {
         .unwrap();
 
     let pwd = executor.exec_cmd(&Command::shell("pwd")).await.unwrap();
-    assert_eq!(pwd.to_string(), "/tmp");
+    assert_eq!(pwd.stdout, "/tmp");
 
     let write_cmd = Command::write_file(Path::new("override.txt"), "contents");
     executor.exec_cmd(&write_cmd).await.unwrap();
 
     let read_cmd = Command::read_file(Path::new("override.txt"));
     let read_output = executor.exec_cmd(&read_cmd).await.unwrap();
-    assert_eq!(read_output.output, "contents");
+    assert_eq!(read_output.stdout, "contents");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -296,10 +318,10 @@ async fn test_overrides_include_git_respects_ignore() {
     let ls = executor.exec_cmd(&Command::shell("ls -aRl")).await.unwrap();
 
     eprintln!("Executor LS:\n {ls}");
-    assert!(ls.to_string().contains(".git"));
-    assert!(!ls.to_string().contains("README.md"));
-    assert!(!ls.to_string().contains("target"));
-    assert!(!ls.to_string().contains("ignored_file"));
+    assert!(ls.stdout.contains(".git"));
+    assert!(!ls.stdout.contains("README.md"));
+    assert!(!ls.stdout.contains("target"));
+    assert!(!ls.stdout.contains("ignored_file"));
 
     // read .git/HEAD to check if git works
     let git_head = executor
@@ -307,7 +329,7 @@ async fn test_overrides_include_git_respects_ignore() {
         .await
         .unwrap();
 
-    assert!(git_head.to_string().contains("ref: refs/heads/"));
+    assert!(git_head.stdout.contains("ref: refs/heads/"));
 
     // test git works
     let git_status = executor
@@ -318,7 +340,7 @@ async fn test_overrides_include_git_respects_ignore() {
     eprintln!("{git_status}");
 
     // It's ignored so git will think it's deleted
-    assert!(git_status.to_string().contains("deleted:    ignored_file"));
+    assert!(git_status.stdout.contains("deleted:    ignored_file"));
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -345,7 +367,7 @@ async fn test_write_and_read_file_with_quotes() {
     //
     let read_file = executor.exec_cmd(&Command::read_file(path)).await.unwrap();
 
-    assert_eq!(content, read_file.output);
+    assert_eq!(content, read_file.stdout);
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -383,7 +405,7 @@ async fn test_write_and_read_file_markdown() {
     //
     let read_file = executor.exec_cmd(&Command::read_file(path)).await.unwrap();
 
-    assert_eq!(content, read_file.output);
+    assert_eq!(content, read_file.stdout);
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -415,7 +437,7 @@ async fn test_assert_container_stopped_on_drop() {
         .exec_cmd(&Command::shell("echo 'hello'"))
         .await
         .unwrap();
-    assert_eq!(result.to_string(), "hello");
+    assert_eq!(result.stdout, "hello");
 
     let _ = executor.shutdown().await;
 
@@ -470,7 +492,7 @@ async fn test_assert_container_retain_on_drop() {
         .exec_cmd(&Command::shell("echo 'hello'"))
         .await
         .unwrap();
-    assert_eq!(result.to_string(), "hello");
+    assert_eq!(result.stdout, "hello");
     let container_id = executor.container_id.clone();
 
     drop(executor);
@@ -518,7 +540,7 @@ async fn test_assert_container_stopped_on_drop_entrypoint() {
         .exec_cmd(&Command::shell("echo 'hello'"))
         .await
         .unwrap();
-    assert_eq!(result.to_string(), "hello");
+    assert_eq!(result.stdout, "hello");
 
     let _ = executor.shutdown().await;
 
@@ -579,7 +601,7 @@ async fn test_create_file_subdirectory_that_does_not_exist() {
     let read_file = executor.exec_cmd(&Command::read_file(path)).await.unwrap();
 
     // Assert that the written content matches the read content
-    assert_eq!(content, read_file.output);
+    assert_eq!(content, read_file.stdout);
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -605,7 +627,7 @@ async fn test_custom_dockerfile() {
         .exec_cmd(&Command::shell("echo hello"))
         .await
         .unwrap();
-    assert_eq!(output.to_string(), "hello");
+    assert_eq!(output.stdout, "hello");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -636,7 +658,7 @@ async fn test_nullifies_cmd() {
         .await
         .unwrap();
     dbg!(executor.logs().await.unwrap());
-    assert_eq!(output.to_string(), "hello");
+    assert_eq!(output.stdout, "hello");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -666,7 +688,7 @@ async fn test_nullifies_entrypoint() {
         .exec_cmd(&Command::shell("echo hello"))
         .await
         .unwrap();
-    assert_eq!(output.to_string(), "hello");
+    assert_eq!(output.stdout, "hello");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -730,7 +752,7 @@ async fn test_docker_logs_in_stdout() {
         .await
         .unwrap();
 
-    assert_eq!(output.to_string(), "hello");
+    assert_eq!(output.stdout, "hello");
 
     let expected = "stdout: hello";
     let logs = wait_for_log_line(&executor, expected).await;
@@ -796,7 +818,7 @@ async fn test_existing_image_no_context() {
     assert!(executor.is_running().await);
 
     let output = executor.exec_cmd(&Command::shell("ls")).await;
-    // assert_eq!(output.to_string(), "hello");
+    // assert_eq!(output.stdout, "hello");
     println!("--- container logs ---");
     for log in executor.logs().await.unwrap() {
         println!("{log}");
@@ -853,7 +875,7 @@ async fn test_run_multiline_bash_script() {
 
     let output = executor.exec_cmd(&Command::shell(script)).await.unwrap();
 
-    let result = output.to_string();
+    let result = output.stdout;
     assert!(result.contains("line1"));
     assert!(result.contains("line2"));
     assert!(result.contains("line3"));
@@ -879,7 +901,7 @@ print(1 + 2)"#;
     dbg!(executor.logs().await.unwrap());
     let output = output.unwrap();
 
-    let result = output.to_string();
+    let result = output.stdout;
     assert!(result.contains("hello from python"));
     assert!(result.contains("3"));
 }
@@ -899,7 +921,7 @@ async fn test_clear_env() {
     let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // TEST_VAR is set via Dockerfile.tests; with clear_env it should be absent
-    let env_output = output.to_string();
+    let env_output = output.stdout;
     dbg!(&env_output);
     assert!(
         !env_output.contains("TEST_VAR=test"),
@@ -922,7 +944,7 @@ async fn test_no_clear_env() {
     let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // TEST_VAR is set via Dockerfile.tests; without clear_env it should be present
-    let env_output = output.to_string();
+    let env_output = output.stdout;
     dbg!(&env_output);
     assert!(
         env_output.contains("TEST_VAR=test"),
@@ -945,7 +967,7 @@ async fn test_remove_env() {
     let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // Check that common host env vars are not present
-    let env_output = output.to_string();
+    let env_output = output.stdout;
     dbg!(&env_output);
     dbg!(&executor.logs().await.unwrap());
     assert!(!env_output.contains("HOSTNAME="), "HOST env propagated");
@@ -969,7 +991,7 @@ async fn test_add_env() {
     let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // Check that common host env vars are not present
-    let env_output = output.to_string();
+    let env_output = output.stdout;
     dbg!(&env_output);
     assert!(
         env_output.contains("TEST_ENV=test_value"),
@@ -1132,8 +1154,7 @@ async fn test_background_shell_command_returns_immediately() {
 
     // Optionally, assert output for a friendly message
     assert!(
-        output.to_string().contains("Background command started")
-            || output.to_string().trim().is_empty(),
+        output.stdout.contains("Background command started") || output.stdout.trim().is_empty(),
         "Unexpected output from background command: {}",
         output
     );
@@ -1143,5 +1164,5 @@ async fn test_background_shell_command_returns_immediately() {
         .exec_cmd(&Command::shell("echo done"))
         .await
         .unwrap();
-    assert_eq!(echo.to_string(), "done");
+    assert_eq!(echo.stdout, "done");
 }

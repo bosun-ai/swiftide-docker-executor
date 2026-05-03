@@ -27,6 +27,6 @@ version = "0.13.7"
 categories = ["asynchronous"]
 
 [patch.crates-io]
-# swiftide-core = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-core", branch = "master" }
-# swiftide-indexing = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-indexing", branch = "master" }
-# swiftide-agents = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-agents", branch = "master" }
+swiftide-core = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-core", branch = "master" }
+swiftide-indexing = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-indexing", branch = "master" }
+swiftide-agents = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-agents", branch = "master" }
