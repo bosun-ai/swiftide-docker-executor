@@ -15,12 +15,12 @@ categories.workspace = true
 [dependencies]
 swiftide-core.workspace = true
 
-bollard = { version = "0.19.2" }
+bollard = { version = "0.20" }
 thiserror = "2.0"
 async-trait = "0.1"
 ignore = "0.4"
 walkdir = "2.5"
-tokio-tar = { version = "0.5.6", package = "astral-tokio-tar" }
+tokio-tar = { version = "0.6", package = "astral-tokio-tar" }
 tokio-util = "0.7.16"
 uuid = { version = "1.12", features = ["v4"] }
 tracing.workspace = true
@@ -51,4 +51,4 @@ pretty_assertions = "1.4"
 
 [features]
 default = []
-buildkit = ["bollard/buildkit"]
+buildkit = ["bollard/buildkit", "bollard/time"]

@@ -1,9 +1,9 @@
 use std::{io::Write as _, sync::Arc};
 
 use anyhow::Result;
-use bollard::query_parameters::BuildImageOptions;
 #[cfg(feature = "buildkit")]
-use bollard::secret::BuildInfoAux;
+use bollard::models::BuildInfoAux;
+use bollard::query_parameters::BuildImageOptions;
 use http_body_util::{Either, Full};
 use swiftide_core::prelude::StreamExt as _;
 
@@ -67,15 +67,12 @@ impl ImageBuilder {
                             .for_each(|log| tracing::info!("{}", log.name))
                     }
 
-                    if let Some(error) = output.error {
-                        let details = output
-                            .error_detail
-                            .and_then(|e| e.message)
-                            .unwrap_or_default();
+                    if let Some(error_detail) = output.error_detail {
+                        let message = error_detail.message.unwrap_or_default();
 
-                        tracing::error!(details, "Build error: {error}");
+                        tracing::error!(message, "Build error");
 
-                        return Err(ImageBuildError::BuildError(format!("{error} {details}")));
+                        return Err(ImageBuildError::BuildError(message));
                     }
                 }
                 Err(e) => {
