@@ -2412,7 +2412,7 @@ dependencies = [
 
 [[package]]
 name = "swiftide-docker-executor"
-version = "0.13.7"
+version = "0.13.8"
 dependencies = [
  "anyhow",
  "astral-tokio-tar",
@@ -2446,7 +2446,7 @@ dependencies = [
 
 [[package]]
 name = "swiftide-docker-service"
-version = "0.13.7"
+version = "0.13.8"
 dependencies = [
  "futures-util",
  "indoc",
