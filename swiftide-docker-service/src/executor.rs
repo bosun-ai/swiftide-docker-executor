@@ -115,8 +115,14 @@ impl ShellExecutor for MyShellExecutor {
                 cmd.arg(&script_path);
                 cmd
             } else {
-                // Non-bash shebangs should be executed by their declared interpreter directly.
-                Command::new(&script_path)
+                // Invoke the interpreter ourselves so Linux never execs a just-written temp file.
+                let (interpreter, args) = shebang_command(first_line).ok_or_else(|| {
+                    Status::internal(format!("Failed to parse shebang: {first_line}"))
+                })?;
+                let mut cmd = Command::new(interpreter);
+                cmd.args(args);
+                cmd.arg(&script_path);
+                cmd
             };
 
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
@@ -280,13 +286,22 @@ fn is_bash_shebang(line: &str) -> bool {
     }
 }
 
-fn shebang_args(line: &str) -> Option<impl Iterator<Item = &str>> {
+fn shebang_command(line: &str) -> Option<(&str, Vec<&str>)> {
     let command = line.strip_prefix("#!")?;
     let mut parts = command.split_whitespace();
     let interpreter = parts.next()?;
 
+    Some((interpreter, parts.collect()))
+}
+
+fn shebang_args(line: &str) -> Option<Vec<&str>> {
+    let (interpreter, mut parts) = shebang_command(line)?;
+
     if interpreter.ends_with("/env") {
-        let _program = parts.next()?;
+        if parts.is_empty() {
+            return None;
+        }
+        parts.remove(0);
     }
 
     Some(parts)
