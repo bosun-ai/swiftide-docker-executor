@@ -393,9 +393,9 @@ dependencies = [
 
 [[package]]
 name = "convert_case"
-version = "0.8.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+checksum = "affbf0190ed2caf063e3def54ff444b449371d55c58e513a95ab98eca50adb49"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -490,12 +490,12 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.21.3"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
+checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
 dependencies = [
- "darling_core 0.21.3",
- "darling_macro 0.21.3",
+ "darling_core 0.23.0",
+ "darling_macro 0.23.0",
 ]
 
 [[package]]
@@ -514,11 +514,10 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
-version = "0.21.3"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
+checksum = "9865a50f7c335f53564bb694ef660825eb8610e0a53d3e11bf1b0d3df31e03b0"
 dependencies = [
- "fnv",
  "ident_case",
  "proc-macro2",
  "quote",
@@ -538,11 +537,11 @@ dependencies = [
 
 [[package]]
 name = "darling_macro"
-version = "0.21.3"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
+checksum = "ac3984ec7bd6cfa798e62b4a642426a5be0e68f9401cfc2a01e3fa9ea2fcdb8d"
 dependencies = [
- "darling_core 0.21.3",
+ "darling_core 0.23.0",
  "quote",
  "syn",
 ]
@@ -633,7 +632,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -699,7 +698,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1486,7 +1485,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2033,7 +2032,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2370,14 +2369,32 @@ version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.27.2",
 ]
+
+[[package]]
+name = "strum"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
 
 [[package]]
 name = "strum_macros"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2394,8 +2411,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swiftide-agents"
 version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "104f584e5ace1c929de1020eb17a4a0ffdb544ad38ebef637a5f473bd1d787d7"
+source = "git+https://github.com/bosun-ai/swiftide?branch=master#9c9746cda928f589f2d594e29e1e5a5d79cb8a6b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2408,8 +2424,8 @@ dependencies = [
  "schemars 1.1.0",
  "serde",
  "serde_json",
- "strum",
- "strum_macros",
+ "strum 0.28.0",
+ "strum_macros 0.28.0",
  "swiftide-core",
  "swiftide-indexing",
  "thiserror",
@@ -2422,8 +2438,7 @@ dependencies = [
 [[package]]
 name = "swiftide-core"
 version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d7c8055d195da40129ed38b07f5cd56df1b3c4d67971addbde23cde7611bcee"
+source = "git+https://github.com/bosun-ai/swiftide?branch=master#9c9746cda928f589f2d594e29e1e5a5d79cb8a6b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2437,8 +2452,8 @@ dependencies = [
  "schemars 1.1.0",
  "serde",
  "serde_json",
- "strum",
- "strum_macros",
+ "strum 0.28.0",
+ "strum_macros 0.28.0",
  "tera",
  "thiserror",
  "tokio",
@@ -2502,8 +2517,7 @@ dependencies = [
 [[package]]
 name = "swiftide-indexing"
 version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b018ec798049b705f151e8a7668219577a369766fa30c3b7d54fbfc0da0857e8"
+source = "git+https://github.com/bosun-ai/swiftide?branch=master#9c9746cda928f589f2d594e29e1e5a5d79cb8a6b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2516,8 +2530,8 @@ dependencies = [
  "num_cpus",
  "serde",
  "serde_json",
- "strum",
- "strum_macros",
+ "strum 0.28.0",
+ "strum_macros 0.28.0",
  "swiftide-core",
  "swiftide-macros",
  "text-splitter",
@@ -2529,13 +2543,12 @@ dependencies = [
 [[package]]
 name = "swiftide-macros"
 version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "940dd567e60f48e4442e33433aaa6891dfe7af3cc4ff35d59716b494970e3c55"
+source = "git+https://github.com/bosun-ai/swiftide?branch=master#9c9746cda928f589f2d594e29e1e5a5d79cb8a6b"
 dependencies = [
  "anyhow",
  "async-trait",
  "convert_case",
- "darling 0.21.3",
+ "darling 0.23.0",
  "proc-macro2",
  "quote",
  "schemars 1.1.0",
@@ -2582,7 +2595,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2625,9 +2638,9 @@ dependencies = [
 
 [[package]]
 name = "text-splitter"
-version = "0.27.0"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f7e97f5863248f7d07896a1816bd4110cb1b0b122741f157d702121a270bf33"
+checksum = "2979ebb41243f6c8adc1c1adb76f35fe4e59ba2bc07f7863bb56bcc838798bf4"
 dependencies = [
  "ahash",
  "auto_enums",
@@ -2637,7 +2650,7 @@ dependencies = [
  "itertools",
  "memchr",
  "pulldown-cmark",
- "strum",
+ "strum 0.27.2",
  "thiserror",
 ]
 
@@ -3171,7 +3184,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

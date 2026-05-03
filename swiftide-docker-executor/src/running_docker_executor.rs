@@ -391,12 +391,12 @@ impl RunningDockerExecutor {
 
         let stdout = stdout.trim().to_string();
         let stderr = stderr.trim().to_string();
-        let merged = merge_stream_output(&stdout, &stderr);
+        let output = CommandOutput::from_parts(stdout, stderr);
 
         if exit_code == 0 {
-            Ok(CommandOutput::new(merged))
+            Ok(output)
         } else {
-            Err(CommandError::NonZeroExit(CommandOutput::new(merged)))
+            Err(CommandError::NonZeroExit(output))
         }
     }
 
@@ -494,15 +494,6 @@ impl RunningDockerExecutor {
             .await?;
 
         Ok(())
-    }
-}
-
-fn merge_stream_output(stdout: &str, stderr: &str) -> String {
-    match (stdout.is_empty(), stderr.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => stdout.to_string(),
-        (true, false) => stderr.to_string(),
-        (false, false) => format!("{stdout}\n{stderr}"),
     }
 }
 
