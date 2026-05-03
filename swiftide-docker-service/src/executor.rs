@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Stdio;
@@ -87,26 +86,24 @@ impl ShellExecutor for MyShellExecutor {
         }
 
         let lines: Vec<&str> = command.lines().collect();
-        let mut temp_script: Option<tempfile::TempPath> = None;
+        let mut temp_script: Option<tempfile::TempDir> = None;
         let mut child = if let Some(first_line) = lines.first()
             && first_line.starts_with("#!")
         {
             tracing::info!("detected shebang; running as script");
 
-            let mut script = tempfile::Builder::new()
+            let script_dir = tempfile::Builder::new()
                 .prefix("swiftide-script-")
-                .tempfile_in("/tmp")
+                .tempdir_in("/tmp")
                 .map_err(|e| Status::internal(format!("Failed to create temp script: {e:?}")))?;
-            script
-                .write_all(command.as_bytes())
+            let script_path = script_dir.path().join("script");
+            std::fs::write(&script_path, command.as_bytes())
                 .map_err(|e| Status::internal(format!("Failed to write temp script: {e:?}")))?;
             let permissions = std::fs::Permissions::from_mode(0o755);
-            script.as_file().set_permissions(permissions).map_err(|e| {
+            std::fs::set_permissions(&script_path, permissions).map_err(|e| {
                 Status::internal(format!("Failed to set script permissions: {e:?}"))
             })?;
-            let script_path = script.path().to_path_buf();
-            let script_path_guard = script.into_temp_path();
-            temp_script = Some(script_path_guard);
+            temp_script = Some(script_dir);
 
             let mut cmd = if has_bash && is_bash_shebang(first_line) {
                 // Bash scripts should run as login shells so profile files are honored.
