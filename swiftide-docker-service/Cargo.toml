@@ -21,6 +21,7 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3" }
 futures-util.workspace = true
 tempfile = "3"
+libc = "0.2"
 
 swiftide-indexing = { workspace = true, optional = true }
 swiftide-core = { workspace = true, optional = true }

@@ -2435,6 +2435,7 @@ version = "0.13.5"
 dependencies = [
  "futures-util",
  "indoc",
+ "libc",
  "prost",
  "swiftide-core",
  "swiftide-indexing",

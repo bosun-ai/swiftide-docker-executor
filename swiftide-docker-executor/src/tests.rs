@@ -1008,6 +1008,89 @@ async fn test_default_timeout_triggers() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_timeout_kills_child_processes_and_executor_recovers() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-timeout-process-group")
+        .with_default_timeout(Duration::from_secs(1))
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let command = Command::shell(
+        r#"
+        child_pid_file=/tmp/swiftide-timeout-child-pid
+        rm -f "$child_pid_file"
+        sleep 30 &
+        echo "$!" > "$child_pid_file"
+        wait
+        "#,
+    );
+
+    let result = tokio::time::timeout(Duration::from_secs(6), executor.exec_cmd(&command))
+        .await
+        .expect("timed-out command should return promptly");
+    let err = result.expect_err("command should time out");
+    match err {
+        CommandError::TimedOut { timeout, .. } => {
+            assert_eq!(timeout, Duration::from_secs(1));
+        }
+        other => panic!("unexpected error: {other:#}"),
+    }
+
+    let echo = Command::shell("echo healthy");
+    let output = tokio::time::timeout(Duration::from_secs(3), executor.exec_cmd(&echo))
+        .await
+        .expect("executor should accept another command after timeout")
+        .unwrap();
+    assert_eq!(output.to_string(), "healthy");
+
+    let read_pid = Command::read_file(Path::new("/tmp/swiftide-timeout-child-pid"));
+    let child_pid = executor.exec_cmd(&read_pid).await.unwrap().to_string();
+    let child_pid = child_pid.trim();
+
+    let inspect = Command::shell(format!(
+        r#"if [ -r /proc/{child_pid}/stat ]; then awk '{{ print $3 }}' /proc/{child_pid}/stat; else echo gone; fi"#
+    ));
+    let child_state = executor.exec_cmd(&inspect).await.unwrap().to_string();
+    assert!(
+        child_state == "gone" || child_state == "Z",
+        "timed-out child process should be gone or reaped as a zombie, got state {child_state:?}"
+    );
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_timed_out_command_does_not_kill_concurrent_command() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-timeout-process-group-isolation")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let timed_out = Command::shell("sleep 30").with_timeout(Duration::from_secs(1));
+    let survivor = Command::shell("sleep 3 && echo survivor").with_timeout(Duration::from_secs(8));
+
+    let (timed_out_result, survivor_result) =
+        tokio::join!(executor.exec_cmd(&timed_out), executor.exec_cmd(&survivor));
+
+    let err = timed_out_result.expect_err("command should time out");
+    match err {
+        CommandError::TimedOut { timeout, .. } => {
+            assert_eq!(timeout, Duration::from_secs(1));
+        }
+        other => panic!("unexpected error: {other:#}"),
+    }
+
+    let output = survivor_result.expect("concurrent command should survive timeout cleanup");
+    assert_eq!(output.to_string(), "survivor");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_per_command_timeout_overrides_default() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE)
