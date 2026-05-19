@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Stdio;
@@ -89,44 +88,45 @@ impl ShellExecutor for MyShellExecutor {
         }
 
         let lines: Vec<&str> = command.lines().collect();
-        let mut temp_script: Option<tempfile::TempPath> = None;
+        let mut temp_script: Option<tempfile::TempDir> = None;
         let mut child = if let Some(first_line) = lines.first()
             && first_line.starts_with("#!")
         {
             tracing::info!("detected shebang; running as script");
 
-            let mut script = tempfile::Builder::new()
+            let script_dir = tempfile::Builder::new()
                 .prefix("swiftide-script-")
-                .tempfile_in("/tmp")
+                .tempdir_in("/tmp")
                 .map_err(|e| Status::internal(format!("Failed to create temp script: {e:?}")))?;
-            script
-                .write_all(command.as_bytes())
+            let script_path = script_dir.path().join("script");
+            std::fs::write(&script_path, command.as_bytes())
                 .map_err(|e| Status::internal(format!("Failed to write temp script: {e:?}")))?;
             let permissions = std::fs::Permissions::from_mode(0o755);
-            script.as_file().set_permissions(permissions).map_err(|e| {
+            std::fs::set_permissions(&script_path, permissions).map_err(|e| {
                 Status::internal(format!("Failed to set script permissions: {e:?}"))
             })?;
-            let script_path = script.path().to_path_buf();
-            let script_path_guard = script.into_temp_path();
-            temp_script = Some(script_path_guard);
+            temp_script = Some(script_dir);
 
-            // Run interpreter from within a login shell so profile files are honored,
-            // while still executing the original shebang interpreter via the script file.
-            let mut cmd = Command::new(if has_bash { "/bin/bash" } else { "sh" });
-            if has_bash {
+            let mut cmd = if has_bash && is_bash_shebang(first_line) {
+                // Bash scripts should run as login shells so profile files are honored.
+                let mut cmd = Command::new("/bin/bash");
                 cmd.arg("--login");
-                cmd.arg("-c");
-                cmd.arg("exec \"$@\"");
-                cmd.arg("bash"); // $0 for -c
+                if let Some(args) = shebang_args(first_line) {
+                    cmd.args(args);
+                }
+                cmd.arg(&script_path);
+                cmd
             } else {
-                // Many /bin/sh implementations accept -l for login shells.
-                cmd.arg("-l");
-                cmd.arg("-c");
-                cmd.arg("exec \"$@\"");
-                cmd.arg("sh");
-            }
+                // Invoke the interpreter ourselves so Linux never execs a just-written temp file.
+                let (interpreter, args) = shebang_command(first_line).ok_or_else(|| {
+                    Status::internal(format!("Failed to parse shebang: {first_line}"))
+                })?;
+                let mut cmd = Command::new(interpreter);
+                cmd.args(args);
+                cmd.arg(&script_path);
+                cmd
+            };
 
-            cmd.arg(&script_path);
             apply_env_settings(&mut cmd, env_clear, env_remove, envs);
 
             cmd.current_dir(workdir_path)
@@ -174,15 +174,7 @@ impl ShellExecutor for MyShellExecutor {
 
                     let (stdout_lines, stderr_lines) =
                         output.collect_with_timeout(OUTPUT_DRAIN_TIMEOUT).await;
-                    let stdout = stdout_lines.join("\n");
-                    let stderr = stderr_lines.join("\n");
-                    let combined = merge_output(&stdout, &stderr);
-
-                    let message = if combined.is_empty() {
-                        format!("Command timed out after {limit:?}")
-                    } else {
-                        format!("Command timed out after {limit:?}: {combined}")
-                    };
+                    let message = timeout_message(limit, &stdout_lines, &stderr_lines);
 
                     drop(temp_script);
                     return Err(Status::deadline_exceeded(message));
@@ -239,12 +231,68 @@ fn is_background(cmd: &str) -> bool {
     trimmed.ends_with('&') && !trimmed.ends_with("\\&")
 }
 
-fn merge_output(stdout: &str, stderr: &str) -> String {
-    match (stdout.is_empty(), stderr.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => stdout.to_string(),
-        (true, false) => stderr.to_string(),
-        (false, false) => format!("{stdout}\n{stderr}"),
+fn is_bash_shebang(line: &str) -> bool {
+    let Some(command) = line.strip_prefix("#!") else {
+        return false;
+    };
+
+    let mut parts = command.split_whitespace();
+    match (parts.next(), parts.next()) {
+        (Some(interpreter), _) if interpreter.ends_with("/bash") || interpreter == "bash" => true,
+        (Some(interpreter), Some(program))
+            if interpreter.ends_with("/env")
+                && (program == "bash" || program.ends_with("/bash")) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn shebang_command(line: &str) -> Option<(&str, Vec<&str>)> {
+    let command = line.strip_prefix("#!")?;
+    let mut parts = command.split_whitespace();
+    let interpreter = parts.next()?;
+
+    Some((interpreter, parts.collect()))
+}
+
+fn shebang_args(line: &str) -> Option<Vec<&str>> {
+    let (interpreter, mut parts) = shebang_command(line)?;
+
+    if interpreter.ends_with("/env") {
+        if parts.is_empty() {
+            return None;
+        }
+        parts.remove(0);
+    }
+
+    Some(parts)
+}
+
+fn timeout_message(limit: Duration, stdout: &[String], stderr: &[String]) -> String {
+    let mut message = format!("Command timed out after {limit:?}");
+
+    if !stdout.is_empty() || !stderr.is_empty() {
+        message.push_str(": ");
+        push_lines(&mut message, stdout);
+
+        if !stdout.is_empty() && !stderr.is_empty() {
+            message.push('\n');
+        }
+
+        push_lines(&mut message, stderr);
+    }
+
+    message
+}
+
+fn push_lines(message: &mut String, lines: &[String]) {
+    for (index, line) in lines.iter().enumerate() {
+        if index > 0 {
+            message.push('\n');
+        }
+        message.push_str(line);
     }
 }
 
