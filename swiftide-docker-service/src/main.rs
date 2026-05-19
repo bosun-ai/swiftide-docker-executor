@@ -2,9 +2,11 @@ use executor::{MyShellExecutor, codegen::shell_executor_server::ShellExecutorSer
 use tokio::signal::unix::{SignalKind, signal};
 use tonic::transport::Server;
 
+mod command_cleanup;
 mod executor;
 #[cfg(feature = "file-loader")]
 mod loader;
+mod output_collector;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
