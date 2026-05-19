@@ -37,6 +37,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
+            type=sha,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
