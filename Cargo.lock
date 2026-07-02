@@ -2390,7 +2390,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swiftide-agents"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#cd4428bc62a7f637243cd388cf9357a040cfe721"
+source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#46506dd7127648cd1143572b54bf68235c651303"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2418,7 +2418,7 @@ dependencies = [
 [[package]]
 name = "swiftide-core"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#cd4428bc62a7f637243cd388cf9357a040cfe721"
+source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#46506dd7127648cd1143572b54bf68235c651303"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2499,7 +2499,7 @@ dependencies = [
 [[package]]
 name = "swiftide-indexing"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#cd4428bc62a7f637243cd388cf9357a040cfe721"
+source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#46506dd7127648cd1143572b54bf68235c651303"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2525,7 +2525,7 @@ dependencies = [
 [[package]]
 name = "swiftide-macros"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#cd4428bc62a7f637243cd388cf9357a040cfe721"
+source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#46506dd7127648cd1143572b54bf68235c651303"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2542,7 +2542,7 @@ dependencies = [
 [[package]]
 name = "swiftide-tasks"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#cd4428bc62a7f637243cd388cf9357a040cfe721"
+source = "git+https://github.com/bosun-ai/swiftide?branch=feat%2Fread-only-shell-command#46506dd7127648cd1143572b54bf68235c651303"
 dependencies = [
  "async-trait",
  "dyn-clone",
