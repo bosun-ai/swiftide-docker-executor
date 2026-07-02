@@ -64,11 +64,16 @@ impl ToolExecutor for RunningDockerExecutor {
 
         match cmd {
             Command::Shell { command, .. } => self.exec_shell(command, &workdir, timeout).await,
+            Command::ReadOnlyShell { command, .. } => {
+                self.exec_read_only_shell(command, &workdir, timeout).await
+            }
             Command::ReadFile { path, .. } => self.exec_read_file(&workdir, path, timeout).await,
             Command::WriteFile { path, content, .. } => {
                 self.exec_write_file(&workdir, path, content, timeout).await
             }
-            _ => unimplemented!(),
+            _ => Err(CommandError::ExecutorError(anyhow::anyhow!(
+                "unsupported command for Docker executor: {cmd:?}"
+            ))),
         }
     }
 
@@ -392,6 +397,66 @@ impl RunningDockerExecutor {
         let stdout = stdout.trim().to_string();
         let stderr = stderr.trim().to_string();
         let output = CommandOutput::from_parts(stdout, stderr);
+
+        if exit_code == 0 {
+            Ok(output)
+        } else {
+            Err(CommandError::NonZeroExit(output))
+        }
+    }
+
+    async fn exec_read_only_shell(
+        &self,
+        cmd: &str,
+        workdir: &Path,
+        timeout: Option<Duration>,
+    ) -> Result<CommandOutput, CommandError> {
+        let mut client = ShellExecutorClient::connect(format!(
+            "http://{}:{}",
+            self.container_ip, self.container_port
+        ))
+        .await
+        .map_err(anyhow::Error::from)?;
+
+        let timeout_ms = timeout.map(duration_to_millis);
+        tracing::debug!(?timeout_ms, "sending read-only shell request with timeout");
+
+        let request = tonic::Request::new(codegen::ReadOnlyShellRequest {
+            command: cmd.to_string(),
+            timeout_ms,
+            cwd: Some(workdir.display().to_string()),
+        });
+
+        let response = match client.exec_read_only_shell(request).await {
+            Ok(resp) => resp.into_inner(),
+            Err(status) => {
+                if status.code() == tonic::Code::DeadlineExceeded
+                    && let Some(limit) = timeout
+                {
+                    let message = status.message().to_string();
+                    let output = if message.is_empty() {
+                        CommandOutput::empty()
+                    } else {
+                        CommandOutput::new(message)
+                    };
+
+                    return Err(CommandError::TimedOut {
+                        timeout: limit,
+                        output,
+                    });
+                }
+
+                return Err(CommandError::ExecutorError(status.into()));
+            }
+        };
+
+        let codegen::ShellResponse {
+            stdout,
+            stderr,
+            exit_code,
+        } = response;
+
+        let output = CommandOutput::from_parts(stdout.trim(), stderr.trim());
 
         if exit_code == 0 {
             Ok(output)

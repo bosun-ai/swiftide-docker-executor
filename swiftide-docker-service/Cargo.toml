@@ -35,3 +35,6 @@ file-loader = ["dep:swiftide-indexing", "dep:swiftide-core"]
 
 [dev-dependencies]
 indoc = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4.5"

@@ -19,11 +19,14 @@ pub mod codegen {
 }
 
 use codegen::shell_executor_server::ShellExecutor;
-use codegen::{ShellRequest, ShellResponse};
+use codegen::{ReadOnlyShellRequest, ShellRequest, ShellResponse};
 
 /// gRPC shell executor service implementation.
 #[derive(Debug, Default)]
 pub struct MyShellExecutor;
+
+#[cfg(target_os = "linux")]
+const READ_ONLY_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 #[tonic::async_trait]
 impl ShellExecutor for MyShellExecutor {
@@ -202,6 +205,84 @@ impl ShellExecutor for MyShellExecutor {
 
         Ok(Response::new(response))
     }
+
+    #[tracing::instrument(skip_all)]
+    async fn exec_read_only_shell(
+        &self,
+        request: Request<ReadOnlyShellRequest>,
+    ) -> Result<Response<ShellResponse>, Status> {
+        let ReadOnlyShellRequest {
+            command,
+            timeout_ms,
+            cwd,
+        } = request.into_inner();
+
+        if is_background(&command) {
+            return Err(Status::invalid_argument(
+                "read-only shell does not support background commands",
+            ));
+        }
+
+        let timeout = timeout_ms.map(Duration::from_millis);
+        let workdir = cwd.unwrap_or_else(|| ".".to_string());
+        let workdir_path = Path::new(&workdir);
+
+        ensure_read_only_workdir(workdir_path)?;
+
+        let temp_home = tempfile::Builder::new()
+            .prefix("swiftide-readonly-")
+            .tempdir_in("/tmp")
+            .map_err(|e| Status::internal(format!("Failed to create read-only home: {e:?}")))?;
+        std::fs::set_permissions(temp_home.path(), std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| Status::internal(format!("Failed to protect read-only home: {e:?}")))?;
+
+        let has_bash = Path::new("/bin/bash").exists();
+        let mut child =
+            spawn_read_only_command(&command, workdir_path, temp_home.path(), has_bash)?;
+
+        let output = OutputCollector::capture(&mut child);
+        let wait_future = child.wait();
+        let status = match timeout {
+            Some(limit) => match time::timeout(limit, wait_future).await {
+                Ok(result) => result.map_err(|e| {
+                    tracing::error!(error = ?e, "Failed to wait for read-only command");
+                    Status::internal(format!("Failed to wait for read-only command: {e:?}"))
+                })?,
+                Err(_) => {
+                    tracing::warn!(?limit, "Read-only command exceeded timeout; terminating");
+                    CommandCleanup::new(child).terminate();
+
+                    let (stdout_lines, stderr_lines) =
+                        output.collect_with_timeout(OUTPUT_DRAIN_TIMEOUT).await;
+                    let message = timeout_message(limit, &stdout_lines, &stderr_lines);
+
+                    drop(temp_home);
+                    return Err(Status::deadline_exceeded(message));
+                }
+            },
+            None => wait_future.await.map_err(|e| {
+                tracing::error!(error = ?e, "Failed to wait for read-only command");
+                Status::internal(format!("Failed to wait for read-only command: {e:?}"))
+            })?,
+        };
+
+        drop(temp_home);
+
+        let (stdout_lines, stderr_lines) = output.collect().await;
+        let response = ShellResponse {
+            exit_code: status.code().unwrap_or(-1),
+            stdout: stdout_lines.join("\n"),
+            stderr: stderr_lines.join("\n"),
+        };
+
+        tracing::info!(
+            command,
+            exit_code = response.exit_code,
+            "Read-only command executed"
+        );
+
+        Ok(Response::new(response))
+    }
 }
 
 fn apply_env_settings(
@@ -224,6 +305,139 @@ fn apply_env_settings(
         tracing::info!(key, "setting environment variable");
         cmd.env(key, value);
     }
+}
+
+fn spawn_read_only_command(
+    command: &str,
+    workdir: &Path,
+    temp_home: &Path,
+    has_bash: bool,
+) -> Result<tokio::process::Child, Status> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (command, workdir, temp_home, has_bash);
+        Err(Status::unimplemented(
+            "read-only shell is only supported on Linux",
+        ))
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let shell = if has_bash { "/bin/bash" } else { "sh" };
+        let mut cmd = Command::new(shell);
+
+        cmd.env_clear()
+            .env("PATH", READ_ONLY_PATH)
+            .env("HOME", temp_home)
+            .env("TMPDIR", temp_home)
+            .env("CI", "true")
+            .env("GIT_OPTIONAL_LOCKS", "0");
+
+        if has_bash {
+            cmd.arg("--noprofile").arg("--norc");
+        }
+
+        cmd.arg("-c")
+            .arg(command)
+            .current_dir(workdir)
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let landlock_ruleset = create_read_only_landlock(temp_home)?;
+        let mut landlock_ruleset = Some(landlock_ruleset);
+
+        // Safety: pre_exec runs in the child process after fork and before exec.
+        // The ruleset is created before spawning; the child only restricts itself
+        // before it runs the shell, so the service process is not affected.
+        unsafe {
+            cmd.pre_exec(move || {
+                let Some(ruleset) = landlock_ruleset.take() else {
+                    return Err(std::io::Error::other(
+                        "Landlock read-only ruleset was already consumed",
+                    ));
+                };
+                enforce_read_only_landlock(ruleset)
+            });
+        }
+
+        cmd.spawn().map_err(|e| {
+            tracing::error!(error = ?e, "Failed to start read-only command");
+            Status::internal(format!("Failed to start read-only command: {e:?}"))
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn create_read_only_landlock(temp_home: &Path) -> std::io::Result<landlock::RulesetCreated> {
+    use landlock::{
+        ABI, AccessFs, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset, RulesetAttr,
+        RulesetCreatedAttr,
+    };
+
+    // ABI V3 includes the write-like operations agents commonly use to mutate a
+    // checkout, including file writes, creates, deletes, renames, and truncation.
+    let abi = ABI::V3;
+    let write_access = AccessFs::from_write(abi);
+
+    Ruleset::default()
+        .set_compatibility(CompatLevel::HardRequirement)
+        .handle_access(write_access)
+        .map_err(landlock_error)?
+        .create()
+        .map_err(landlock_error)?
+        .add_rule(PathBeneath::new(
+            PathFd::new(temp_home).map_err(landlock_error)?,
+            write_access,
+        ))
+        .map_err(landlock_error)
+}
+
+#[cfg(target_os = "linux")]
+fn enforce_read_only_landlock(ruleset: landlock::RulesetCreated) -> std::io::Result<()> {
+    use landlock::RulesetStatus;
+
+    let status = ruleset.restrict_self().map_err(landlock_error)?;
+
+    if status.ruleset == RulesetStatus::FullyEnforced {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "Landlock read-only ruleset was not fully enforced: {:?}",
+            status
+        )))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn landlock_error(error: impl std::fmt::Display) -> std::io::Error {
+    std::io::Error::other(error.to_string())
+}
+
+fn ensure_read_only_workdir(workdir: &Path) -> Result<(), Status> {
+    let metadata = std::fs::metadata(workdir).map_err(|e| {
+        Status::failed_precondition(format!(
+            "read-only shell workdir does not exist: {}: {e}",
+            workdir.display()
+        ))
+    })?;
+
+    if !metadata.is_dir() {
+        return Err(Status::failed_precondition(format!(
+            "read-only shell workdir is not a directory: {}",
+            workdir.display()
+        )));
+    }
+
+    if metadata.permissions().mode() & 0o002 != 0 {
+        return Err(Status::failed_precondition(format!(
+            "read-only shell workdir is world-writable: {}",
+            workdir.display()
+        )));
+    }
+
+    Ok(())
 }
 
 fn is_background(cmd: &str) -> bool {
@@ -299,7 +513,9 @@ fn push_lines(message: &mut String, lines: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::codegen::shell_executor_server::ShellExecutor;
-    use super::{MyShellExecutor, codegen::ShellRequest, is_background};
+    use super::{
+        MyShellExecutor, codegen::ReadOnlyShellRequest, codegen::ShellRequest, is_background,
+    };
     use indoc::indoc;
     use std::fs;
     use std::path::Path;
@@ -324,6 +540,78 @@ mod tests {
     #[test]
     fn test_is_not_background() {
         assert!(!is_background("echo hello"));
+    }
+
+    #[tokio::test]
+    async fn read_only_shell_rejects_background_commands() {
+        let executor = MyShellExecutor;
+        let req = ReadOnlyShellRequest {
+            command: "sleep 60 &".to_string(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+        };
+
+        let err = executor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn read_only_shell_requires_existing_workdir() {
+        let executor = MyShellExecutor;
+        let req = ReadOnlyShellRequest {
+            command: "pwd".to_string(),
+            timeout_ms: Some(5_000),
+            cwd: Some("/definitely/not/a/real/workdir".to_string()),
+        };
+
+        let err = executor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn read_only_shell_allows_reads_and_temp_writes_but_blocks_workdir_writes() {
+        let workdir = tempdir().unwrap();
+        let file_path = workdir.path().join("existing.txt");
+        fs::write(&file_path, "original").unwrap();
+
+        let executor = MyShellExecutor;
+        let req = ReadOnlyShellRequest {
+            command: indoc! {r#"
+                printf 'read='
+                cat existing.txt
+                printf '\ntmp='
+                echo temp-ok > "$TMPDIR/out" && cat "$TMPDIR/out"
+                printf '\nwrite='
+                if echo changed > existing.txt; then echo allowed; else echo denied; fi
+                printf '\nfinal='
+                cat existing.txt
+            "#}
+            .to_string(),
+            timeout_ms: Some(5_000),
+            cwd: Some(workdir.path().to_string_lossy().into_owned()),
+        };
+
+        let resp = executor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(
+            resp.stdout.trim(),
+            "read=original\ntmp=temp-ok\nwrite=denied\nfinal=original"
+        );
+        assert_eq!(fs::read_to_string(file_path).unwrap(), "original");
     }
 
     #[tokio::test]

@@ -60,6 +60,14 @@ let tmp_pwd = executor
 
 The same resolution logic applies to `Command::read_file` and `Command::write_file`, so relative file paths are always interpreted relative to the effective working directory for that command.
 
+## Read-only shell commands
+
+`Command::read_only_shell` uses a separate gRPC method from unrestricted shell execution. This is intentional: older services that do not implement the method return `UNIMPLEMENTED` instead of accidentally running the command through full shell access.
+
+On Linux, the service runs read-only shell commands under a Landlock ruleset. The ruleset handles write-like filesystem rights and grants them only to a per-command temporary `HOME` / `TMPDIR`. Reads and command execution are left alone, so agents can still use normal shell tools to inspect a checkout, while attempts to mutate the executor workspace fail. The command also runs with a sanitized environment and `GIT_OPTIONAL_LOCKS=0` so common read-only git commands avoid optional lock writes.
+
+Executors that cannot enforce these semantics return an error. They must not fall back to `Command::shell`.
+
 ## Timeouts
 
 Long-running commands can be bounded either globally or per invocation. Set a default timeout that applies to every command with `.with_default_timeout(Duration)`:
