@@ -607,9 +607,19 @@ mod tests {
             .into_inner();
 
         assert_eq!(resp.exit_code, 0);
+        let lines = resp
+            .stdout
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
         assert_eq!(
-            resp.stdout.trim(),
-            "read=original\ntmp=temp-ok\nwrite=denied\nfinal=original"
+            lines,
+            vec![
+                "read=original",
+                "tmp=temp-ok",
+                "write=denied",
+                "final=original"
+            ]
         );
         assert_eq!(fs::read_to_string(file_path).unwrap(), "original");
     }
