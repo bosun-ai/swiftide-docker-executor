@@ -64,7 +64,7 @@ The same resolution logic applies to `Command::read_file` and `Command::write_fi
 
 `Command::read_only_shell` uses a separate gRPC method from unrestricted shell execution. This is intentional: older services that do not implement the method return `UNIMPLEMENTED` instead of accidentally running the command through full shell access.
 
-On Linux, the service runs read-only shell commands under a Landlock ruleset plus a small seccomp filter. Landlock handles write-like filesystem rights and grants them only to a per-command temporary `TMPDIR`; seccomp denies metadata mutation such as chmod, chown, and timestamp changes. Reads and command execution are left alone, so agents can still use normal shell tools to inspect a checkout, while attempts to mutate the executor workspace fail. The command preserves the configured executor environment, including `HOME`, and defaults `GIT_OPTIONAL_LOCKS=0` so common read-only git commands avoid optional lock writes.
+On Linux, the service runs read-only shell commands under a Landlock ruleset plus a small seccomp filter. Landlock handles write-like filesystem rights and grants them only to a per-command temporary `TMPDIR`; seccomp denies metadata mutation such as chmod, chown, and timestamp changes. Reads and command execution are left alone inside the executor container, while attempts to mutate the executor workspace fail. The command preserves the configured executor environment, including `HOME`, and defaults `GIT_OPTIONAL_LOCKS=0` so common read-only git commands avoid optional lock writes.
 
 The high-level Docker executor tests exercise this through the normal gRPC path:
 

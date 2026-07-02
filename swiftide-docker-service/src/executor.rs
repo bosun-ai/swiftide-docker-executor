@@ -10,7 +10,7 @@ use tonic::{Request, Response, Status};
 
 use crate::command_cleanup::CommandCleanup;
 use crate::output_collector::OutputCollector;
-use crate::read_only_sandbox;
+use crate::read_only_shell::{self, CommandEnv, ReadOnlyWorkdir};
 
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -225,31 +225,12 @@ impl ShellExecutor for MyShellExecutor {
         }
 
         let timeout = timeout_ms.map(Duration::from_millis);
-        let workdir = cwd.unwrap_or_else(|| ".".to_string());
-        let workdir_path = Path::new(&workdir);
+        let workdir = ReadOnlyWorkdir::try_new(cwd.unwrap_or_else(|| ".".to_string()))?;
+        let env = CommandEnv::new(env_clear, env_remove, envs);
+        let mut command_handle = read_only_shell::spawn(&command, workdir, env)?;
 
-        ensure_read_only_workdir(workdir_path)?;
-
-        let temp_home = tempfile::Builder::new()
-            .prefix("swiftide-readonly-")
-            .tempdir_in("/tmp")
-            .map_err(|e| Status::internal(format!("Failed to create read-only home: {e:?}")))?;
-        std::fs::set_permissions(temp_home.path(), std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| Status::internal(format!("Failed to protect read-only home: {e:?}")))?;
-
-        let has_bash = Path::new("/bin/bash").exists();
-        let mut child = read_only_sandbox::spawn_command(
-            &command,
-            workdir_path,
-            temp_home.path(),
-            has_bash,
-            env_clear,
-            env_remove,
-            envs,
-        )?;
-
-        let output = OutputCollector::capture(&mut child);
-        let wait_future = child.wait();
+        let output = OutputCollector::capture(command_handle.child_mut());
+        let wait_future = command_handle.child_mut().wait();
         let status = match timeout {
             Some(limit) => match time::timeout(limit, wait_future).await {
                 Ok(result) => result.map_err(|e| {
@@ -258,13 +239,12 @@ impl ShellExecutor for MyShellExecutor {
                 })?,
                 Err(_) => {
                     tracing::warn!(?limit, "Read-only command exceeded timeout; terminating");
-                    CommandCleanup::new(child).terminate();
+                    command_handle.terminate();
 
                     let (stdout_lines, stderr_lines) =
                         output.collect_with_timeout(OUTPUT_DRAIN_TIMEOUT).await;
                     let message = timeout_message(limit, &stdout_lines, &stderr_lines);
 
-                    drop(temp_home);
                     return Err(Status::deadline_exceeded(message));
                 }
             },
@@ -274,7 +254,8 @@ impl ShellExecutor for MyShellExecutor {
             })?,
         };
 
-        drop(temp_home);
+        command_handle.cleanup_process_group();
+        drop(command_handle);
 
         let (stdout_lines, stderr_lines) = output.collect().await;
         let response = ShellResponse {
@@ -313,31 +294,6 @@ fn apply_env_settings(
         tracing::info!(key, "setting environment variable");
         cmd.env(key, value);
     }
-}
-
-fn ensure_read_only_workdir(workdir: &Path) -> Result<(), Status> {
-    let metadata = std::fs::metadata(workdir).map_err(|e| {
-        Status::failed_precondition(format!(
-            "read-only shell workdir does not exist: {}: {e}",
-            workdir.display()
-        ))
-    })?;
-
-    if !metadata.is_dir() {
-        return Err(Status::failed_precondition(format!(
-            "read-only shell workdir is not a directory: {}",
-            workdir.display()
-        )));
-    }
-
-    if metadata.permissions().mode() & 0o002 != 0 {
-        return Err(Status::failed_precondition(format!(
-            "read-only shell workdir is world-writable: {}",
-            workdir.display()
-        )));
-    }
-
-    Ok(())
 }
 
 fn is_background(cmd: &str) -> bool {

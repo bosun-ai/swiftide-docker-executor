@@ -1009,6 +1009,42 @@ printf 'env=%s\nprofile=%s\nhome=%s' "$READ_ONLY_MARKER" "$PROFILE_MARKER" "$HOM
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_read_only_shell_cleans_up_background_children_after_success() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-read-only-shell-process-group-cleanup")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let command = Command::read_only_shell(
+        r#"
+            sleep 30 &
+            printf '%s\n' "$!"
+        "#,
+    )
+    .with_timeout(Duration::from_secs(3));
+
+    let output = tokio::time::timeout(Duration::from_secs(8), executor.exec_cmd(&command))
+        .await
+        .expect("read-only command should return promptly")
+        .unwrap();
+    let child_pid = output.stdout.trim();
+    assert!(!child_pid.is_empty(), "expected command to print child pid");
+
+    let inspect = Command::shell(format!(
+        r#"if [ -r /proc/{child_pid}/stat ]; then awk '{{ print $3 }}' /proc/{child_pid}/stat; else echo gone; fi"#
+    ));
+    let child_state = executor.exec_cmd(&inspect).await.unwrap().to_string();
+    assert!(
+        child_state == "gone" || child_state == "Z",
+        "read-only background child should be gone or reaped as a zombie, got state {child_state:?}"
+    );
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_clear_env() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE)
