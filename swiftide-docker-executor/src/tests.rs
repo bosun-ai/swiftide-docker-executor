@@ -933,6 +933,10 @@ async fn test_read_only_shell_reads_workdir_and_blocks_writes() {
                 if echo changed > readonly.txt; then echo allowed; else echo denied; fi
                 printf '\noutside='
                 if echo changed > /tmp/swiftide-readonly-outside; then echo allowed; else echo denied; fi
+                printf '\nchmod='
+                if chmod 600 readonly.txt; then echo allowed; else echo denied; fi
+                printf '\nchown='
+                if chown "$(id -u):$(id -g)" readonly.txt; then echo allowed; else echo denied; fi
                 printf '\nfinal='
                 cat readonly.txt
             "#,
@@ -951,6 +955,8 @@ async fn test_read_only_shell_reads_workdir_and_blocks_writes() {
             "read=original",
             "workdir=denied",
             "outside=denied",
+            "chmod=denied",
+            "chown=denied",
             "final=original"
         ]
     );

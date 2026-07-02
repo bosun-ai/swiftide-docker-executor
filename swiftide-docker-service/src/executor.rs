@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-#[cfg(target_os = "linux")]
-use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Stdio;
@@ -12,6 +10,7 @@ use tonic::{Request, Response, Status};
 
 use crate::command_cleanup::CommandCleanup;
 use crate::output_collector::OutputCollector;
+use crate::read_only_sandbox;
 
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -239,7 +238,7 @@ impl ShellExecutor for MyShellExecutor {
             .map_err(|e| Status::internal(format!("Failed to protect read-only home: {e:?}")))?;
 
         let has_bash = Path::new("/bin/bash").exists();
-        let mut child = spawn_read_only_command(
+        let mut child = read_only_sandbox::spawn_command(
             &command,
             workdir_path,
             temp_home.path(),
@@ -314,178 +313,6 @@ fn apply_env_settings(
         tracing::info!(key, "setting environment variable");
         cmd.env(key, value);
     }
-}
-
-fn spawn_read_only_command(
-    command: &str,
-    workdir: &Path,
-    temp_home: &Path,
-    has_bash: bool,
-    env_clear: bool,
-    env_remove: Vec<String>,
-    envs: HashMap<String, String>,
-) -> Result<tokio::process::Child, Status> {
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (
-            command, workdir, temp_home, has_bash, env_clear, env_remove, envs,
-        );
-        Err(Status::unimplemented(
-            "read-only shell is only supported on Linux",
-        ))
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let mut cmd = read_only_command(command, temp_home, has_bash)?;
-        apply_env_settings(&mut cmd, env_clear, env_remove.clone(), envs.clone());
-        apply_read_only_env_defaults(&mut cmd, &env_remove, &envs, temp_home);
-
-        cmd.current_dir(workdir)
-            .process_group(0)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let landlock_ruleset = create_read_only_landlock(temp_home)?;
-        let mut landlock_ruleset = Some(landlock_ruleset);
-
-        // Safety: pre_exec runs in the child process after fork and before exec.
-        // The ruleset is created before spawning; the child only restricts itself
-        // before it runs the shell, so the service process is not affected.
-        unsafe {
-            cmd.pre_exec(move || {
-                let Some(ruleset) = landlock_ruleset.take() else {
-                    return Err(std::io::Error::other(
-                        "Landlock read-only ruleset was already consumed",
-                    ));
-                };
-                enforce_read_only_landlock(ruleset)
-            });
-        }
-
-        cmd.spawn().map_err(|e| {
-            tracing::error!(error = ?e, "Failed to start read-only command");
-            Status::internal(format!("Failed to start read-only command: {e:?}"))
-        })
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn read_only_command(command: &str, temp_home: &Path, has_bash: bool) -> Result<Command, Status> {
-    let lines = command.lines().collect::<Vec<_>>();
-
-    if let Some(first_line) = lines.first()
-        && first_line.starts_with("#!")
-    {
-        let script_path = temp_home.join("script");
-        let mut script = std::fs::File::create(&script_path)
-            .map_err(|e| Status::internal(format!("Failed to create read-only script: {e:?}")))?;
-        script
-            .write_all(command.as_bytes())
-            .map_err(|e| Status::internal(format!("Failed to write read-only script: {e:?}")))?;
-        drop(script);
-        let permissions = std::fs::Permissions::from_mode(0o755);
-        std::fs::set_permissions(&script_path, permissions).map_err(|e| {
-            Status::internal(format!("Failed to set read-only script permissions: {e:?}"))
-        })?;
-
-        if has_bash && is_bash_shebang(first_line) {
-            let mut cmd = Command::new("/bin/bash");
-            cmd.arg("--login");
-            if let Some(args) = shebang_args(first_line) {
-                cmd.args(args);
-            }
-            cmd.arg(script_path);
-            return Ok(cmd);
-        }
-
-        let (interpreter, args) = shebang_command(first_line)
-            .ok_or_else(|| Status::internal(format!("Failed to parse shebang: {first_line}")))?;
-        let mut cmd = Command::new(interpreter);
-        cmd.args(args);
-        cmd.arg(script_path);
-        return Ok(cmd);
-    }
-
-    let shell = if has_bash { "/bin/bash" } else { "sh" };
-    let mut cmd = Command::new(shell);
-    if has_bash {
-        cmd.arg("--login");
-    }
-    cmd.arg("-c").arg(command);
-    Ok(cmd)
-}
-
-#[cfg(target_os = "linux")]
-fn apply_read_only_env_defaults(
-    cmd: &mut Command,
-    env_remove: &[String],
-    envs: &HashMap<String, String>,
-    temp_home: &Path,
-) {
-    if should_set_read_only_default("TMPDIR", env_remove, envs) {
-        cmd.env("TMPDIR", temp_home);
-    }
-
-    if should_set_read_only_default("GIT_OPTIONAL_LOCKS", env_remove, envs) {
-        cmd.env("GIT_OPTIONAL_LOCKS", "0");
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn should_set_read_only_default(
-    key: &str,
-    env_remove: &[String],
-    envs: &HashMap<String, String>,
-) -> bool {
-    !envs.contains_key(key) && !env_remove.iter().any(|var| var == key)
-}
-
-#[cfg(target_os = "linux")]
-fn create_read_only_landlock(temp_home: &Path) -> std::io::Result<landlock::RulesetCreated> {
-    use landlock::{
-        ABI, AccessFs, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset, RulesetAttr,
-        RulesetCreatedAttr,
-    };
-
-    // ABI V3 includes the write-like operations agents commonly use to mutate a
-    // checkout, including file writes, creates, deletes, renames, and truncation.
-    let abi = ABI::V3;
-    let write_access = AccessFs::from_write(abi);
-
-    Ruleset::default()
-        .set_compatibility(CompatLevel::HardRequirement)
-        .handle_access(write_access)
-        .map_err(landlock_error)?
-        .create()
-        .map_err(landlock_error)?
-        .add_rule(PathBeneath::new(
-            PathFd::new(temp_home).map_err(landlock_error)?,
-            write_access,
-        ))
-        .map_err(landlock_error)
-}
-
-#[cfg(target_os = "linux")]
-fn enforce_read_only_landlock(ruleset: landlock::RulesetCreated) -> std::io::Result<()> {
-    use landlock::RulesetStatus;
-
-    let status = ruleset.restrict_self().map_err(landlock_error)?;
-
-    if status.ruleset == RulesetStatus::FullyEnforced {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(format!(
-            "Landlock read-only ruleset was not fully enforced: {:?}",
-            status
-        )))
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn landlock_error(error: impl std::fmt::Display) -> std::io::Error {
-    std::io::Error::other(error.to_string())
 }
 
 fn ensure_read_only_workdir(workdir: &Path) -> Result<(), Status> {
@@ -679,6 +506,10 @@ mod tests {
                     "if echo changed > existing.txt; then echo allowed; else echo denied; fi\n",
                     "printf '\\noutside='\n",
                     "if echo changed > {outside}; then echo allowed; else echo denied; fi\n",
+                    "printf '\\nchmod='\n",
+                    "if chmod 600 existing.txt; then echo allowed; else echo denied; fi\n",
+                    "printf '\\nchown='\n",
+                    "if chown \"$(id -u):$(id -g)\" existing.txt; then echo allowed; else echo denied; fi\n",
                     "printf '\\nfinal=' && cat existing.txt"
                 ),
                 outside = outside_path.display()
@@ -709,6 +540,8 @@ mod tests {
                 "tmp=temp-ok",
                 "workdir=denied",
                 "outside=denied",
+                "chmod=denied",
+                "chown=denied",
                 "final=original"
             ]
         );
