@@ -35,6 +35,15 @@ message ReadOnlyShellRequest {
 
   // Optional working directory for the command execution.
   optional string cwd = 3;
+
+  // Clears inherited environment variables before applying envs.
+  bool env_clear = 4;
+
+  // Environment variable names to remove before applying envs.
+  repeated string env_remove = 5;
+
+  // Environment variables to set for the read-only command.
+  map<string, string> envs = 6;
 }
 
 // The response message containing exit code, stdout, and stderr.

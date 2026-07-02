@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Stdio;
@@ -24,9 +26,6 @@ use codegen::{ReadOnlyShellRequest, ShellRequest, ShellResponse};
 /// gRPC shell executor service implementation.
 #[derive(Debug, Default)]
 pub struct MyShellExecutor;
-
-#[cfg(target_os = "linux")]
-const READ_ONLY_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 #[tonic::async_trait]
 impl ShellExecutor for MyShellExecutor {
@@ -213,6 +212,9 @@ impl ShellExecutor for MyShellExecutor {
     ) -> Result<Response<ShellResponse>, Status> {
         let ReadOnlyShellRequest {
             command,
+            env_clear,
+            env_remove,
+            envs,
             timeout_ms,
             cwd,
         } = request.into_inner();
@@ -237,8 +239,15 @@ impl ShellExecutor for MyShellExecutor {
             .map_err(|e| Status::internal(format!("Failed to protect read-only home: {e:?}")))?;
 
         let has_bash = Path::new("/bin/bash").exists();
-        let mut child =
-            spawn_read_only_command(&command, workdir_path, temp_home.path(), has_bash)?;
+        let mut child = spawn_read_only_command(
+            &command,
+            workdir_path,
+            temp_home.path(),
+            has_bash,
+            env_clear,
+            env_remove,
+            envs,
+        )?;
 
         let output = OutputCollector::capture(&mut child);
         let wait_future = child.wait();
@@ -312,10 +321,15 @@ fn spawn_read_only_command(
     workdir: &Path,
     temp_home: &Path,
     has_bash: bool,
+    env_clear: bool,
+    env_remove: Vec<String>,
+    envs: HashMap<String, String>,
 ) -> Result<tokio::process::Child, Status> {
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (command, workdir, temp_home, has_bash);
+        let _ = (
+            command, workdir, temp_home, has_bash, env_clear, env_remove, envs,
+        );
         Err(Status::unimplemented(
             "read-only shell is only supported on Linux",
         ))
@@ -323,23 +337,11 @@ fn spawn_read_only_command(
 
     #[cfg(target_os = "linux")]
     {
-        let shell = if has_bash { "/bin/bash" } else { "sh" };
-        let mut cmd = Command::new(shell);
+        let mut cmd = read_only_command(command, temp_home, has_bash)?;
+        apply_env_settings(&mut cmd, env_clear, env_remove.clone(), envs.clone());
+        apply_read_only_env_defaults(&mut cmd, &env_remove, &envs, temp_home);
 
-        cmd.env_clear()
-            .env("PATH", READ_ONLY_PATH)
-            .env("HOME", temp_home)
-            .env("TMPDIR", temp_home)
-            .env("CI", "true")
-            .env("GIT_OPTIONAL_LOCKS", "0");
-
-        if has_bash {
-            cmd.arg("--noprofile").arg("--norc");
-        }
-
-        cmd.arg("-c")
-            .arg(command)
-            .current_dir(workdir)
+        cmd.current_dir(workdir)
             .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -367,6 +369,77 @@ fn spawn_read_only_command(
             Status::internal(format!("Failed to start read-only command: {e:?}"))
         })
     }
+}
+
+#[cfg(target_os = "linux")]
+fn read_only_command(command: &str, temp_home: &Path, has_bash: bool) -> Result<Command, Status> {
+    let lines = command.lines().collect::<Vec<_>>();
+
+    if let Some(first_line) = lines.first()
+        && first_line.starts_with("#!")
+    {
+        let script_path = temp_home.join("script");
+        let mut script = std::fs::File::create(&script_path)
+            .map_err(|e| Status::internal(format!("Failed to create read-only script: {e:?}")))?;
+        script
+            .write_all(command.as_bytes())
+            .map_err(|e| Status::internal(format!("Failed to write read-only script: {e:?}")))?;
+        drop(script);
+        let permissions = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(&script_path, permissions).map_err(|e| {
+            Status::internal(format!("Failed to set read-only script permissions: {e:?}"))
+        })?;
+
+        if has_bash && is_bash_shebang(first_line) {
+            let mut cmd = Command::new("/bin/bash");
+            cmd.arg("--login");
+            if let Some(args) = shebang_args(first_line) {
+                cmd.args(args);
+            }
+            cmd.arg(script_path);
+            return Ok(cmd);
+        }
+
+        let (interpreter, args) = shebang_command(first_line)
+            .ok_or_else(|| Status::internal(format!("Failed to parse shebang: {first_line}")))?;
+        let mut cmd = Command::new(interpreter);
+        cmd.args(args);
+        cmd.arg(script_path);
+        return Ok(cmd);
+    }
+
+    let shell = if has_bash { "/bin/bash" } else { "sh" };
+    let mut cmd = Command::new(shell);
+    if has_bash {
+        cmd.arg("--login");
+    }
+    cmd.arg("-c").arg(command);
+    Ok(cmd)
+}
+
+#[cfg(target_os = "linux")]
+fn apply_read_only_env_defaults(
+    cmd: &mut Command,
+    env_remove: &[String],
+    envs: &HashMap<String, String>,
+    temp_home: &Path,
+) {
+    if should_set_read_only_default("TMPDIR", env_remove, envs) {
+        cmd.env("TMPDIR", temp_home);
+    }
+
+    if should_set_read_only_default("GIT_OPTIONAL_LOCKS", env_remove, envs) {
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn should_set_read_only_default(
+    key: &str,
+    env_remove: &[String],
+    envs: &HashMap<String, String>,
+) -> bool {
+    !envs.contains_key(key) && !env_remove.iter().any(|var| var == key)
 }
 
 #[cfg(target_os = "linux")]
@@ -549,6 +622,9 @@ mod tests {
             command: "sleep 60 &".to_string(),
             timeout_ms: Some(5_000),
             cwd: None,
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
         };
 
         let err = executor
@@ -566,6 +642,9 @@ mod tests {
             command: "pwd".to_string(),
             timeout_ms: Some(5_000),
             cwd: Some("/definitely/not/a/real/workdir".to_string()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
         };
 
         let err = executor
@@ -581,23 +660,34 @@ mod tests {
     async fn read_only_shell_allows_reads_and_temp_writes_but_blocks_workdir_writes() {
         let workdir = tempdir().unwrap();
         let file_path = workdir.path().join("existing.txt");
+        let outside_path = std::env::temp_dir().join(format!(
+            "swiftide-docker-service-readonly-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&outside_path);
         fs::write(&file_path, "original").unwrap();
 
         let executor = MyShellExecutor;
         let req = ReadOnlyShellRequest {
-            command: indoc! {r#"
-                printf 'read='
-                cat existing.txt
-                printf '\ntmp='
-                echo temp-ok > "$TMPDIR/out" && cat "$TMPDIR/out"
-                printf '\nwrite='
-                if echo changed > existing.txt; then echo allowed; else echo denied; fi
-                printf '\nfinal='
-                cat existing.txt
-            "#}
-            .to_string(),
+            command: format!(
+                concat!(
+                    "printf 'read='\n",
+                    "cat existing.txt\n",
+                    "printf '\\ntmp='\n",
+                    "echo temp-ok > \"$TMPDIR/out\" && cat \"$TMPDIR/out\"\n",
+                    "printf '\\nworkdir='\n",
+                    "if echo changed > existing.txt; then echo allowed; else echo denied; fi\n",
+                    "printf '\\noutside='\n",
+                    "if echo changed > {outside}; then echo allowed; else echo denied; fi\n",
+                    "printf '\\nfinal=' && cat existing.txt"
+                ),
+                outside = outside_path.display()
+            ),
             timeout_ms: Some(5_000),
             cwd: Some(workdir.path().to_string_lossy().into_owned()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
         };
 
         let resp = executor
@@ -617,11 +707,66 @@ mod tests {
             vec![
                 "read=original",
                 "tmp=temp-ok",
-                "write=denied",
+                "workdir=denied",
+                "outside=denied",
                 "final=original"
             ]
         );
         assert_eq!(fs::read_to_string(file_path).unwrap(), "original");
+        assert!(!outside_path.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn read_only_shell_preserves_env_home_and_shebang_behavior() {
+        if !Path::new("/bin/bash").exists() {
+            return;
+        }
+
+        let workdir = tempdir().unwrap();
+        let home = workdir.path().join("home");
+        fs::create_dir(&home).unwrap();
+        fs::write(
+            home.join(".bash_profile"),
+            "export PROFILE_MARKER=profile\n",
+        )
+        .unwrap();
+
+        let executor = MyShellExecutor;
+        let req = ReadOnlyShellRequest {
+            command: indoc! {r#"
+                #!/bin/bash
+                printf 'env=%s\nprofile=%s\nhome=%s' \
+                  "$READ_ONLY_MARKER" "$PROFILE_MARKER" "$HOME"
+            "#}
+            .to_string(),
+            timeout_ms: Some(5_000),
+            cwd: Some(workdir.path().to_string_lossy().into_owned()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: [
+                ("HOME".to_string(), home.to_string_lossy().into_owned()),
+                ("READ_ONLY_MARKER".to_string(), "from-env".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let resp = executor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(
+            resp.stdout.lines().collect::<Vec<_>>(),
+            vec![
+                "env=from-env",
+                "profile=profile",
+                &format!("home={}", home.display())
+            ]
+        );
     }
 
     #[tokio::test]

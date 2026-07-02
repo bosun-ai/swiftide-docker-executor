@@ -425,6 +425,9 @@ impl RunningDockerExecutor {
             command: cmd.to_string(),
             timeout_ms,
             cwd: Some(workdir.display().to_string()),
+            env_clear: self.env_clear,
+            env_remove: self.remove_env.clone(),
+            envs: self.env.clone(),
         });
 
         let response = match client.exec_read_only_shell(request).await {
