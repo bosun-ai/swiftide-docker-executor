@@ -399,6 +399,29 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
     }
 
+    #[tokio::test]
+    async fn read_only_shell_requires_directory_workdir() {
+        let workdir = tempdir().unwrap();
+        let file_path = workdir.path().join("file");
+        fs::write(&file_path, "not a directory").unwrap();
+
+        let req = ReadOnlyShellRequest {
+            command: "pwd".to_string(),
+            timeout_ms: Some(5_000),
+            cwd: Some(file_path.to_string_lossy().into_owned()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+        };
+
+        let err = MyShellExecutor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn read_only_shell_allows_reads_and_blocks_writes() {
