@@ -446,6 +446,58 @@ mod tests {
         assert!(!tmp_path.exists());
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn read_only_shell_preserves_env_home_and_shebang_behavior() {
+        if !Path::new("/bin/bash").exists() {
+            return;
+        }
+
+        let workdir = tempdir().unwrap();
+        let home = workdir.path().join("home");
+        fs::create_dir(&home).unwrap();
+        fs::write(
+            home.join(".bash_profile"),
+            "export PROFILE_MARKER=profile\n",
+        )
+        .unwrap();
+
+        let req = ReadOnlyShellRequest {
+            command: indoc! {r#"
+                #!/bin/bash
+                printf 'env=%s\nprofile=%s\nhome=%s' \
+                  "$READ_ONLY_MARKER" "$PROFILE_MARKER" "$HOME"
+            "#}
+            .to_string(),
+            timeout_ms: Some(5_000),
+            cwd: Some(workdir.path().to_string_lossy().into_owned()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: [
+                ("HOME".to_string(), home.to_string_lossy().into_owned()),
+                ("READ_ONLY_MARKER".to_string(), "from-env".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let resp = MyShellExecutor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(
+            resp.stdout.lines().collect::<Vec<_>>(),
+            vec![
+                "env=from-env",
+                "profile=profile",
+                &format!("home={}", home.display())
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn test_exec_shell_shebang_env_sh() {
         let executor = MyShellExecutor;

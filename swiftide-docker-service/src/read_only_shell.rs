@@ -209,16 +209,3 @@ fn read_only_command(command: &str, has_bash: bool) -> Result<PreparedCommand, S
         script_dir: None,
     })
 }
-
-#[cfg(all(test, target_os = "linux"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn read_only_command_keeps_shebang_script_alive() {
-        let prepared = read_only_command("#!/bin/bash\nprintf ok", true)
-            .expect("shebang command should build");
-
-        assert!(prepared.script_dir.is_some());
-    }
-}
