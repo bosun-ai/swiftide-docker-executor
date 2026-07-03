@@ -7,6 +7,9 @@ mod executor;
 #[cfg(feature = "file-loader")]
 mod loader;
 mod output_collector;
+mod read_only_sandbox;
+mod read_only_shell;
+mod shell_script;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

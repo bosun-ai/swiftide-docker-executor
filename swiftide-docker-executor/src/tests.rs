@@ -907,6 +907,112 @@ print(1 + 2)"#;
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_read_only_shell_reads_workdir_and_blocks_writes() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-read-only-shell-boundaries")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    executor
+        .exec_cmd(&Command::shell(
+            "printf original > readonly.txt; rm -f /tmp/swiftide-readonly-outside /tmp/swiftide-readonly-tmp",
+        ))
+        .await
+        .unwrap();
+
+    let output = executor
+        .exec_cmd(&Command::read_only_shell(
+            r#"
+                printf 'read='
+                cat readonly.txt
+                printf '\nworkdir='
+                if echo changed > readonly.txt; then echo allowed; else echo denied; fi
+                printf '\noutside='
+                if echo changed > /tmp/swiftide-readonly-outside; then echo allowed; else echo denied; fi
+                printf '\ntmp='
+                tmp="${TMPDIR:-/tmp}"
+                if echo changed > "$tmp/swiftide-readonly-tmp"; then echo allowed; else echo denied; fi
+                printf '\nchmod='
+                if chmod 600 readonly.txt; then echo allowed; else echo denied; fi
+                printf '\nchown='
+                if chown "$(id -u):$(id -g)" readonly.txt; then echo allowed; else echo denied; fi
+                printf '\nfinal='
+                cat readonly.txt
+            "#,
+        ))
+        .await
+        .unwrap();
+
+    let lines = output
+        .stdout
+        .lines()
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec![
+            "read=original",
+            "workdir=denied",
+            "outside=denied",
+            "tmp=denied",
+            "chmod=denied",
+            "chown=denied",
+            "final=original"
+        ]
+    );
+
+    let verify = executor
+        .exec_cmd(&Command::shell(
+            "cat readonly.txt; test ! -e /tmp/swiftide-readonly-outside; test ! -e /tmp/swiftide-readonly-tmp",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(verify.stdout, "original");
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_read_only_shell_preserves_env_home_and_shebang() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("test-read-only-shell-env")
+        .with_env("HOME", "/tmp/swiftide-readonly-home")
+        .with_env("READ_ONLY_MARKER", "from-env")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    executor
+        .exec_cmd(&Command::shell(
+            "mkdir -p \"$HOME\"; printf 'export PROFILE_MARKER=from-profile\\n' > \"$HOME/.bash_profile\"",
+        ))
+        .await
+        .unwrap();
+
+    let output = executor
+        .exec_cmd(&Command::read_only_shell(
+            r#"#!/bin/bash
+printf 'env=%s\nprofile=%s\nhome=%s' "$READ_ONLY_MARKER" "$PROFILE_MARKER" "$HOME""#,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        output.stdout.lines().collect::<Vec<_>>(),
+        vec![
+            "env=from-env",
+            "profile=from-profile",
+            "home=/tmp/swiftide-readonly-home"
+        ]
+    );
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_clear_env() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE)

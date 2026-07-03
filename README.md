@@ -60,6 +60,20 @@ let tmp_pwd = executor
 
 The same resolution logic applies to `Command::read_file` and `Command::write_file`, so relative file paths are always interpreted relative to the effective working directory for that command.
 
+## Read-only shell commands
+
+`Command::read_only_shell` uses a separate gRPC method from unrestricted shell execution. This is intentional: older services that do not implement the method return `UNIMPLEMENTED` instead of accidentally running the command through full shell access.
+
+On Linux, the service runs read-only shell commands under a Landlock ruleset plus a small seccomp filter. Landlock denies write-like filesystem rights; seccomp denies metadata mutation such as chmod, chown, and timestamp changes. Reads and command execution are left alone inside the executor container, while attempts to write fail. The command preserves the configured executor environment, including `HOME`, and defaults `GIT_OPTIONAL_LOCKS=0` so common read-only git commands avoid optional lock writes.
+
+The high-level Docker executor tests exercise this through the normal gRPC path:
+
+```sh
+cargo test -p swiftide-docker-executor test_read_only_shell --locked -- --nocapture
+```
+
+Executors that cannot enforce these semantics return an error. They must not fall back to `Command::shell`.
+
 ## Timeouts
 
 Long-running commands can be bounded either globally or per invocation. Set a default timeout that applies to every command with `.with_default_timeout(Duration)`:

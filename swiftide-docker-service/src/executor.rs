@@ -10,6 +10,8 @@ use tonic::{Request, Response, Status};
 
 use crate::command_cleanup::CommandCleanup;
 use crate::output_collector::OutputCollector;
+use crate::read_only_shell;
+use crate::shell_script;
 
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -19,7 +21,7 @@ pub mod codegen {
 }
 
 use codegen::shell_executor_server::ShellExecutor;
-use codegen::{ShellRequest, ShellResponse};
+use codegen::{ReadOnlyShellRequest, ShellRequest, ShellResponse};
 
 /// gRPC shell executor service implementation.
 #[derive(Debug, Default)]
@@ -107,18 +109,18 @@ impl ShellExecutor for MyShellExecutor {
             })?;
             temp_script = Some(script_dir);
 
-            let mut cmd = if has_bash && is_bash_shebang(first_line) {
+            let mut cmd = if has_bash && shell_script::is_bash_shebang(first_line) {
                 // Bash scripts should run as login shells so profile files are honored.
                 let mut cmd = Command::new("/bin/bash");
                 cmd.arg("--login");
-                if let Some(args) = shebang_args(first_line) {
+                if let Some(args) = shell_script::bash_args(first_line) {
                     cmd.args(args);
                 }
                 cmd.arg(&script_path);
                 cmd
             } else {
                 // Invoke the interpreter ourselves so Linux never execs a just-written temp file.
-                let (interpreter, args) = shebang_command(first_line).ok_or_else(|| {
+                let (interpreter, args) = shell_script::command(first_line).ok_or_else(|| {
                     Status::internal(format!("Failed to parse shebang: {first_line}"))
                 })?;
                 let mut cmd = Command::new(interpreter);
@@ -202,6 +204,74 @@ impl ShellExecutor for MyShellExecutor {
 
         Ok(Response::new(response))
     }
+
+    #[tracing::instrument(skip_all)]
+    async fn exec_read_only_shell(
+        &self,
+        request: Request<ReadOnlyShellRequest>,
+    ) -> Result<Response<ShellResponse>, Status> {
+        let ReadOnlyShellRequest {
+            command,
+            env_clear,
+            env_remove,
+            envs,
+            timeout_ms,
+            cwd,
+        } = request.into_inner();
+
+        if is_background(&command) {
+            return Err(Status::invalid_argument(
+                "read-only shell does not support background commands",
+            ));
+        }
+
+        let timeout = timeout_ms.map(Duration::from_millis);
+        let workdir = cwd.unwrap_or_else(|| ".".to_string());
+        let mut command_handle =
+            read_only_shell::spawn(&command, Path::new(&workdir), env_clear, env_remove, envs)?;
+
+        let output = OutputCollector::capture(command_handle.child_mut());
+        let wait_future = command_handle.child_mut().wait();
+        let status = match timeout {
+            Some(limit) => match time::timeout(limit, wait_future).await {
+                Ok(result) => result.map_err(|e| {
+                    tracing::error!(error = ?e, "Failed to wait for read-only command");
+                    Status::internal(format!("Failed to wait for read-only command: {e:?}"))
+                })?,
+                Err(_) => {
+                    tracing::warn!(?limit, "Read-only command exceeded timeout; terminating");
+                    command_handle.terminate();
+
+                    let (stdout_lines, stderr_lines) =
+                        output.collect_with_timeout(OUTPUT_DRAIN_TIMEOUT).await;
+                    let message = timeout_message(limit, &stdout_lines, &stderr_lines);
+
+                    return Err(Status::deadline_exceeded(message));
+                }
+            },
+            None => wait_future.await.map_err(|e| {
+                tracing::error!(error = ?e, "Failed to wait for read-only command");
+                Status::internal(format!("Failed to wait for read-only command: {e:?}"))
+            })?,
+        };
+
+        drop(command_handle);
+
+        let (stdout_lines, stderr_lines) = output.collect().await;
+        let response = ShellResponse {
+            exit_code: status.code().unwrap_or(-1),
+            stdout: stdout_lines.join("\n"),
+            stderr: stderr_lines.join("\n"),
+        };
+
+        tracing::info!(
+            command,
+            exit_code = response.exit_code,
+            "Read-only command executed"
+        );
+
+        Ok(Response::new(response))
+    }
 }
 
 fn apply_env_settings(
@@ -229,45 +299,6 @@ fn apply_env_settings(
 fn is_background(cmd: &str) -> bool {
     let trimmed = cmd.trim_end();
     trimmed.ends_with('&') && !trimmed.ends_with("\\&")
-}
-
-fn is_bash_shebang(line: &str) -> bool {
-    let Some(command) = line.strip_prefix("#!") else {
-        return false;
-    };
-
-    let mut parts = command.split_whitespace();
-    match (parts.next(), parts.next()) {
-        (Some(interpreter), _) if interpreter.ends_with("/bash") || interpreter == "bash" => true,
-        (Some(interpreter), Some(program))
-            if interpreter.ends_with("/env")
-                && (program == "bash" || program.ends_with("/bash")) =>
-        {
-            true
-        }
-        _ => false,
-    }
-}
-
-fn shebang_command(line: &str) -> Option<(&str, Vec<&str>)> {
-    let command = line.strip_prefix("#!")?;
-    let mut parts = command.split_whitespace();
-    let interpreter = parts.next()?;
-
-    Some((interpreter, parts.collect()))
-}
-
-fn shebang_args(line: &str) -> Option<Vec<&str>> {
-    let (interpreter, mut parts) = shebang_command(line)?;
-
-    if interpreter.ends_with("/env") {
-        if parts.is_empty() {
-            return None;
-        }
-        parts.remove(0);
-    }
-
-    Some(parts)
 }
 
 fn timeout_message(limit: Duration, stdout: &[String], stderr: &[String]) -> String {
@@ -299,7 +330,9 @@ fn push_lines(message: &mut String, lines: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::codegen::shell_executor_server::ShellExecutor;
-    use super::{MyShellExecutor, codegen::ShellRequest, is_background};
+    use super::{
+        MyShellExecutor, codegen::ReadOnlyShellRequest, codegen::ShellRequest, is_background,
+    };
     use indoc::indoc;
     use std::fs;
     use std::path::Path;
@@ -324,6 +357,168 @@ mod tests {
     #[test]
     fn test_is_not_background() {
         assert!(!is_background("echo hello"));
+    }
+
+    #[tokio::test]
+    async fn read_only_shell_rejects_background_commands() {
+        let executor = MyShellExecutor;
+        let req = ReadOnlyShellRequest {
+            command: "sleep 60 &".to_string(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+        };
+
+        let err = executor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn read_only_shell_requires_existing_workdir() {
+        let executor = MyShellExecutor;
+        let req = ReadOnlyShellRequest {
+            command: "pwd".to_string(),
+            timeout_ms: Some(5_000),
+            cwd: Some("/definitely/not/a/real/workdir".to_string()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+        };
+
+        let err = executor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[tokio::test]
+    async fn read_only_shell_requires_directory_workdir() {
+        let workdir = tempdir().unwrap();
+        let file_path = workdir.path().join("file");
+        fs::write(&file_path, "not a directory").unwrap();
+
+        let req = ReadOnlyShellRequest {
+            command: "pwd".to_string(),
+            timeout_ms: Some(5_000),
+            cwd: Some(file_path.to_string_lossy().into_owned()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+        };
+
+        let err = MyShellExecutor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn read_only_shell_allows_reads_and_blocks_writes() {
+        let workdir = tempdir().unwrap();
+        let file_path = workdir.path().join("existing.txt");
+        let outside_path = std::env::temp_dir().join(format!(
+            "swiftide-docker-service-readonly-outside-{}",
+            std::process::id()
+        ));
+        let tmp_path = std::env::temp_dir().join(format!(
+            "swiftide-docker-service-readonly-tmp-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&outside_path);
+        let _ = fs::remove_file(&tmp_path);
+        fs::write(&file_path, "original").unwrap();
+
+        let req = ReadOnlyShellRequest {
+            command: format!(
+                "cat existing.txt\n\
+                 if echo changed > existing.txt; then echo workdir-allowed; fi\n\
+                 if echo changed > {outside}; then echo outside-allowed; fi\n\
+                 if echo changed > {tmp}; then echo tmp-allowed; fi\n\
+                 if chmod 600 existing.txt; then echo chmod-allowed; fi",
+                outside = outside_path.display(),
+                tmp = tmp_path.display()
+            ),
+            timeout_ms: Some(5_000),
+            cwd: Some(workdir.path().to_string_lossy().into_owned()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+        };
+
+        let resp = MyShellExecutor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.lines().collect::<Vec<_>>(), vec!["original"]);
+        assert_eq!(fs::read_to_string(file_path).unwrap(), "original");
+        assert!(!outside_path.exists());
+        assert!(!tmp_path.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn read_only_shell_preserves_env_home_and_shebang_behavior() {
+        if !Path::new("/bin/bash").exists() {
+            return;
+        }
+
+        let workdir = tempdir().unwrap();
+        let home = workdir.path().join("home");
+        fs::create_dir(&home).unwrap();
+        fs::write(
+            home.join(".bash_profile"),
+            "export PROFILE_MARKER=profile\n",
+        )
+        .unwrap();
+
+        let req = ReadOnlyShellRequest {
+            command: indoc! {r#"
+                #!/bin/bash
+                printf 'env=%s\nprofile=%s\nhome=%s' \
+                  "$READ_ONLY_MARKER" "$PROFILE_MARKER" "$HOME"
+            "#}
+            .to_string(),
+            timeout_ms: Some(5_000),
+            cwd: Some(workdir.path().to_string_lossy().into_owned()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: [
+                ("HOME".to_string(), home.to_string_lossy().into_owned()),
+                ("READ_ONLY_MARKER".to_string(), "from-env".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let resp = MyShellExecutor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(
+            resp.stdout.lines().collect::<Vec<_>>(),
+            vec![
+                "env=from-env",
+                "profile=profile",
+                &format!("home={}", home.display())
+            ]
+        );
     }
 
     #[tokio::test]

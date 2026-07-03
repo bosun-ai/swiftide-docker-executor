@@ -6,6 +6,9 @@ package shell;
 service ShellExecutor {
   // Runs a shell command and returns exit code, stdout, and stderr.
   rpc ExecShell (ShellRequest) returns (ShellResponse) {}
+
+  // Runs a shell command with read-only access to the workspace.
+  rpc ExecReadOnlyShell (ReadOnlyShellRequest) returns (ShellResponse) {}
 }
 
 // The request message containing the command to run.
@@ -21,6 +24,26 @@ message ShellRequest {
 
   // Optional working directory for the command execution.
   optional string cwd = 7;
+}
+
+// The request message containing the read-only command to run.
+message ReadOnlyShellRequest {
+  string command = 1;
+
+  // Optional timeout in milliseconds for the command execution.
+  optional uint64 timeout_ms = 2;
+
+  // Optional working directory for the command execution.
+  optional string cwd = 3;
+
+  // Clears inherited environment variables before applying envs.
+  bool env_clear = 4;
+
+  // Environment variable names to remove before applying envs.
+  repeated string env_remove = 5;
+
+  // Environment variables to set for the read-only command.
+  map<string, string> envs = 6;
 }
 
 // The response message containing exit code, stdout, and stderr.
