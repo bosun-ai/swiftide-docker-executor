@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::Path};
 use tokio::process::Child;
 use tonic::Status;
 
-use crate::command_cleanup::{CommandCleanup, ProcessGroup};
+use crate::command_cleanup::CommandCleanup;
 #[cfg(target_os = "linux")]
 use crate::read_only_sandbox;
 
@@ -50,9 +50,8 @@ impl CommandEnv {
 
 pub(crate) struct SpawnedReadOnlyCommand {
     child: Child,
-    process_group: Option<ProcessGroup>,
     #[cfg(target_os = "linux")]
-    _scratch: ScratchDir,
+    _script_dir: Option<ScriptDir>,
 }
 
 impl SpawnedReadOnlyCommand {
@@ -62,12 +61,6 @@ impl SpawnedReadOnlyCommand {
 
     pub(crate) fn terminate(self) {
         CommandCleanup::new(self.child).terminate();
-    }
-
-    pub(crate) fn cleanup_process_group(&self) {
-        if let Some(process_group) = self.process_group {
-            process_group.kill_or_log("completed read-only command");
-        }
     }
 }
 
@@ -87,52 +80,56 @@ pub(crate) fn spawn(
 
     #[cfg(target_os = "linux")]
     {
-        let scratch = ScratchDir::new()?;
         let has_bash = Path::new("/bin/bash").exists();
-        let mut cmd = read_only_command(command, scratch.path(), has_bash)?;
+        let prepared = read_only_command(command, has_bash)?;
+        let mut cmd = prepared.command;
 
-        env.apply(&mut cmd, scratch.path());
+        env.apply(&mut cmd);
         cmd.current_dir(workdir.path())
             .process_group(0)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        read_only_sandbox::apply_to_command(&mut cmd, scratch.path())
+        read_only_sandbox::apply_to_command(&mut cmd)
             .map_err(|e| Status::internal(format!("Failed to apply read-only sandbox: {e:?}")))?;
 
         let child = cmd.spawn().map_err(|e| {
             tracing::error!(error = ?e, "Failed to start read-only command");
             Status::internal(format!("Failed to start read-only command: {e:?}"))
         })?;
-        let process_group = ProcessGroup::from_child(&child);
 
         Ok(SpawnedReadOnlyCommand {
             child,
-            process_group,
-            _scratch: scratch,
+            _script_dir: prepared.script_dir,
         })
     }
 }
 
 #[cfg(target_os = "linux")]
-struct ScratchDir {
+struct PreparedCommand {
+    command: tokio::process::Command,
+    script_dir: Option<ScriptDir>,
+}
+
+#[cfg(target_os = "linux")]
+struct ScriptDir {
     inner: tempfile::TempDir,
 }
 
 #[cfg(target_os = "linux")]
-impl ScratchDir {
+impl ScriptDir {
     fn new() -> Result<Self, Status> {
         use std::os::unix::fs::PermissionsExt as _;
 
         let inner = tempfile::Builder::new()
-            .prefix("swiftide-readonly-")
+            .prefix("swiftide-readonly-script-")
             .tempdir_in("/tmp")
             .map_err(|e| {
-                Status::internal(format!("Failed to create read-only scratch dir: {e:?}"))
+                Status::internal(format!("Failed to create read-only script dir: {e:?}"))
             })?;
         std::fs::set_permissions(inner.path(), std::fs::Permissions::from_mode(0o700)).map_err(
-            |e| Status::internal(format!("Failed to protect read-only scratch dir: {e:?}")),
+            |e| Status::internal(format!("Failed to protect read-only script dir: {e:?}")),
         )?;
 
         Ok(Self { inner })
@@ -145,7 +142,7 @@ impl ScratchDir {
 
 #[cfg(target_os = "linux")]
 impl CommandEnv {
-    fn apply(&self, cmd: &mut tokio::process::Command, scratch: &Path) {
+    fn apply(&self, cmd: &mut tokio::process::Command) {
         if self.clear {
             tracing::info!("clearing environment variables");
             cmd.env_clear();
@@ -161,10 +158,6 @@ impl CommandEnv {
             cmd.env(key, value);
         }
 
-        if self.should_set_default("TMPDIR") {
-            cmd.env("TMPDIR", scratch);
-        }
-
         if self.should_set_default("GIT_OPTIONAL_LOCKS") {
             cmd.env("GIT_OPTIONAL_LOCKS", "0");
         }
@@ -176,11 +169,7 @@ impl CommandEnv {
 }
 
 #[cfg(target_os = "linux")]
-fn read_only_command(
-    command: &str,
-    scratch: &Path,
-    has_bash: bool,
-) -> Result<tokio::process::Command, Status> {
+fn read_only_command(command: &str, has_bash: bool) -> Result<PreparedCommand, Status> {
     use std::{io::Write as _, os::unix::fs::PermissionsExt as _};
 
     let lines = command.lines().collect::<Vec<_>>();
@@ -188,7 +177,8 @@ fn read_only_command(
     if let Some(first_line) = lines.first()
         && first_line.starts_with("#!")
     {
-        let script_path = scratch.join("script");
+        let script_dir = ScriptDir::new()?;
+        let script_path = script_dir.path().join("script");
         let mut script = std::fs::File::create(&script_path)
             .map_err(|e| Status::internal(format!("Failed to create read-only script: {e:?}")))?;
         script
@@ -207,7 +197,10 @@ fn read_only_command(
                 cmd.args(args);
             }
             cmd.arg(script_path);
-            return Ok(cmd);
+            return Ok(PreparedCommand {
+                command: cmd,
+                script_dir: Some(script_dir),
+            });
         }
 
         let (interpreter, args) = shebang_command(first_line)
@@ -215,7 +208,10 @@ fn read_only_command(
         let mut cmd = tokio::process::Command::new(interpreter);
         cmd.args(args);
         cmd.arg(script_path);
-        return Ok(cmd);
+        return Ok(PreparedCommand {
+            command: cmd,
+            script_dir: Some(script_dir),
+        });
     }
 
     let shell = if has_bash { "/bin/bash" } else { "sh" };
@@ -224,7 +220,10 @@ fn read_only_command(
         cmd.arg("--login");
     }
     cmd.arg("-c").arg(command);
-    Ok(cmd)
+    Ok(PreparedCommand {
+        command: cmd,
+        script_dir: None,
+    })
 }
 
 #[cfg(target_os = "linux")]

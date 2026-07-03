@@ -1,9 +1,9 @@
 #[cfg(target_os = "linux")]
-use {std::path::Path, tokio::process::Command};
+use tokio::process::Command;
 
 #[cfg(target_os = "linux")]
-pub(crate) fn apply_to_command(cmd: &mut Command, scratch: &Path) -> std::io::Result<()> {
-    let landlock_ruleset = create_read_only_landlock(scratch)?;
+pub(crate) fn apply_to_command(cmd: &mut Command) -> std::io::Result<()> {
+    let landlock_ruleset = create_read_only_landlock()?;
     let mut landlock_ruleset = Some(landlock_ruleset);
 
     // Safety: pre_exec runs in the child process after fork and before exec.
@@ -26,11 +26,8 @@ pub(crate) fn apply_to_command(cmd: &mut Command, scratch: &Path) -> std::io::Re
 }
 
 #[cfg(target_os = "linux")]
-fn create_read_only_landlock(scratch: &Path) -> std::io::Result<landlock::RulesetCreated> {
-    use landlock::{
-        ABI, AccessFs, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset, RulesetAttr,
-        RulesetCreatedAttr,
-    };
+fn create_read_only_landlock() -> std::io::Result<landlock::RulesetCreated> {
+    use landlock::{ABI, AccessFs, CompatLevel, Compatible, Ruleset, RulesetAttr};
 
     let abi = ABI::V3;
     let write_access = AccessFs::from_write(abi);
@@ -40,11 +37,6 @@ fn create_read_only_landlock(scratch: &Path) -> std::io::Result<landlock::Rulese
         .handle_access(write_access)
         .map_err(sandbox_error)?
         .create()
-        .map_err(sandbox_error)?
-        .add_rule(PathBeneath::new(
-            PathFd::new(scratch).map_err(sandbox_error)?,
-            write_access,
-        ))
         .map_err(sandbox_error)
 }
 

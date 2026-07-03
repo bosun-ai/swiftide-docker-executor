@@ -254,7 +254,6 @@ impl ShellExecutor for MyShellExecutor {
             })?,
         };
 
-        command_handle.cleanup_process_group();
         drop(command_handle);
 
         let (stdout_lines, stderr_lines) = output.collect().await;
@@ -440,14 +439,19 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[tokio::test]
-    async fn read_only_shell_allows_reads_and_temp_writes_but_blocks_workdir_writes() {
+    async fn read_only_shell_allows_reads_and_blocks_writes() {
         let workdir = tempdir().unwrap();
         let file_path = workdir.path().join("existing.txt");
         let outside_path = std::env::temp_dir().join(format!(
             "swiftide-docker-service-readonly-outside-{}",
             std::process::id()
         ));
+        let tmp_path = std::env::temp_dir().join(format!(
+            "swiftide-docker-service-readonly-tmp-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_file(&outside_path);
+        let _ = fs::remove_file(&tmp_path);
         fs::write(&file_path, "original").unwrap();
 
         let executor = MyShellExecutor;
@@ -456,19 +460,20 @@ mod tests {
                 concat!(
                     "printf 'read='\n",
                     "cat existing.txt\n",
-                    "printf '\\ntmp='\n",
-                    "echo temp-ok > \"$TMPDIR/out\" && cat \"$TMPDIR/out\"\n",
                     "printf '\\nworkdir='\n",
                     "if echo changed > existing.txt; then echo allowed; else echo denied; fi\n",
                     "printf '\\noutside='\n",
                     "if echo changed > {outside}; then echo allowed; else echo denied; fi\n",
+                    "printf '\\ntmp='\n",
+                    "if echo changed > {tmp}; then echo allowed; else echo denied; fi\n",
                     "printf '\\nchmod='\n",
                     "if chmod 600 existing.txt; then echo allowed; else echo denied; fi\n",
                     "printf '\\nchown='\n",
                     "if chown \"$(id -u):$(id -g)\" existing.txt; then echo allowed; else echo denied; fi\n",
                     "printf '\\nfinal=' && cat existing.txt"
                 ),
-                outside = outside_path.display()
+                outside = outside_path.display(),
+                tmp = tmp_path.display()
             ),
             timeout_ms: Some(5_000),
             cwd: Some(workdir.path().to_string_lossy().into_owned()),
@@ -493,9 +498,9 @@ mod tests {
             lines,
             vec![
                 "read=original",
-                "tmp=temp-ok",
                 "workdir=denied",
                 "outside=denied",
+                "tmp=denied",
                 "chmod=denied",
                 "chown=denied",
                 "final=original"
@@ -503,6 +508,7 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(file_path).unwrap(), "original");
         assert!(!outside_path.exists());
+        assert!(!tmp_path.exists());
     }
 
     #[cfg(target_os = "linux")]

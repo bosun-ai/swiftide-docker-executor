@@ -919,7 +919,7 @@ async fn test_read_only_shell_reads_workdir_and_blocks_writes() {
 
     executor
         .exec_cmd(&Command::shell(
-            "printf original > readonly.txt; rm -f /tmp/swiftide-readonly-outside",
+            "printf original > readonly.txt; rm -f /tmp/swiftide-readonly-outside /tmp/swiftide-readonly-tmp",
         ))
         .await
         .unwrap();
@@ -933,6 +933,9 @@ async fn test_read_only_shell_reads_workdir_and_blocks_writes() {
                 if echo changed > readonly.txt; then echo allowed; else echo denied; fi
                 printf '\noutside='
                 if echo changed > /tmp/swiftide-readonly-outside; then echo allowed; else echo denied; fi
+                printf '\ntmp='
+                tmp="${TMPDIR:-/tmp}"
+                if echo changed > "$tmp/swiftide-readonly-tmp"; then echo allowed; else echo denied; fi
                 printf '\nchmod='
                 if chmod 600 readonly.txt; then echo allowed; else echo denied; fi
                 printf '\nchown='
@@ -955,6 +958,7 @@ async fn test_read_only_shell_reads_workdir_and_blocks_writes() {
             "read=original",
             "workdir=denied",
             "outside=denied",
+            "tmp=denied",
             "chmod=denied",
             "chown=denied",
             "final=original"
@@ -963,7 +967,7 @@ async fn test_read_only_shell_reads_workdir_and_blocks_writes() {
 
     let verify = executor
         .exec_cmd(&Command::shell(
-            "cat readonly.txt; test ! -e /tmp/swiftide-readonly-outside",
+            "cat readonly.txt; test ! -e /tmp/swiftide-readonly-outside; test ! -e /tmp/swiftide-readonly-tmp",
         ))
         .await
         .unwrap();
@@ -1005,42 +1009,6 @@ printf 'env=%s\nprofile=%s\nhome=%s' "$READ_ONLY_MARKER" "$PROFILE_MARKER" "$HOM
             "profile=from-profile",
             "home=/tmp/swiftide-readonly-home"
         ]
-    );
-}
-
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn test_read_only_shell_cleans_up_background_children_after_success() {
-    let executor = DockerExecutor::default()
-        .with_dockerfile(TEST_DOCKERFILE)
-        .with_context_path(".")
-        .with_image_name("test-read-only-shell-process-group-cleanup")
-        .to_owned()
-        .start()
-        .await
-        .unwrap();
-
-    let command = Command::read_only_shell(
-        r#"
-            sleep 30 &
-            printf '%s\n' "$!"
-        "#,
-    )
-    .with_timeout(Duration::from_secs(3));
-
-    let output = tokio::time::timeout(Duration::from_secs(8), executor.exec_cmd(&command))
-        .await
-        .expect("read-only command should return promptly")
-        .unwrap();
-    let child_pid = output.stdout.trim();
-    assert!(!child_pid.is_empty(), "expected command to print child pid");
-
-    let inspect = Command::shell(format!(
-        r#"if [ -r /proc/{child_pid}/stat ]; then awk '{{ print $3 }}' /proc/{child_pid}/stat; else echo gone; fi"#
-    ));
-    let child_state = executor.exec_cmd(&inspect).await.unwrap().to_string();
-    assert!(
-        child_state == "gone" || child_state == "Z",
-        "read-only background child should be gone or reaped as a zombie, got state {child_state:?}"
     );
 }
 

@@ -5,7 +5,7 @@ use tokio::process::Child;
 
 const KILL_EINTR_RETRIES: usize = 3;
 
-/// Cleans up a command and its process group.
+/// Cleans up a command after it exceeded its deadline.
 pub(crate) struct CommandCleanup {
     child: Child,
     process_group: Option<ProcessGroup>,
@@ -14,7 +14,19 @@ pub(crate) struct CommandCleanup {
 impl CommandCleanup {
     /// Creates cleanup for a spawned command and its process group.
     pub(crate) fn new(child: Child) -> Self {
-        let process_group = ProcessGroup::from_child(&child);
+        let process_group = child
+            .id()
+            .and_then(|pid| match ProcessGroup::from_child_pid(pid) {
+                Ok(process_group) => Some(process_group),
+                Err(err) => {
+                    tracing::warn!(
+                        pid,
+                        ?err,
+                        "Timed out command PID cannot be used as a process group"
+                    );
+                    None
+                }
+            });
 
         Self {
             child,
@@ -25,7 +37,15 @@ impl CommandCleanup {
     /// Signals the command for termination and continues reaping it in the background.
     pub(crate) fn terminate(mut self) {
         if let Some(process_group) = self.process_group {
-            process_group.kill_or_log("timed out command");
+            match process_group.kill() {
+                Ok(()) => {}
+                Err(err) if err.raw_os_error() == Some(ESRCH) => {
+                    tracing::debug!("Timed out command process group is already gone");
+                }
+                Err(err) => {
+                    tracing::warn!(?err, "Failed to kill timed out command process group");
+                }
+            }
         }
 
         if let Err(err) = self.child.start_kill() {
@@ -54,33 +74,11 @@ impl CommandCleanup {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct ProcessGroup {
+struct ProcessGroup {
     pid: pid_t,
 }
 
 impl ProcessGroup {
-    pub(crate) fn from_child(child: &Child) -> Option<Self> {
-        child.id().and_then(|pid| match Self::from_child_pid(pid) {
-            Ok(process_group) => Some(process_group),
-            Err(err) => {
-                tracing::warn!(pid, ?err, "Command PID cannot be used as a process group");
-                None
-            }
-        })
-    }
-
-    pub(crate) fn kill_or_log(self, context: &str) {
-        match self.kill() {
-            Ok(()) => {}
-            Err(err) if err.raw_os_error() == Some(ESRCH) => {
-                tracing::debug!(context, "Command process group is already gone");
-            }
-            Err(err) => {
-                tracing::warn!(?err, context, "Failed to kill command process group");
-            }
-        }
-    }
-
     fn from_child_pid(pid: u32) -> io::Result<Self> {
         let pid =
             pid_t::try_from(pid).map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
