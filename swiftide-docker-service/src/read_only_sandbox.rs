@@ -188,6 +188,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn landlock_ruleset_tracks_write_access_without_writable_paths() {
+        create_read_only_landlock().expect("read-only Landlock ruleset should be creatable");
+    }
+
+    #[test]
     fn metadata_mutation_filter_denies_each_metadata_syscall() {
         let filter =
             metadata_mutation_seccomp_filter().expect("metadata mutation filter should build");
@@ -210,5 +215,15 @@ mod tests {
             .count();
 
         assert_eq!(deny_metadata_syscalls, metadata_mutation_syscalls().len());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn metadata_mutation_syscalls_include_common_file_metadata_changes() {
+        let syscalls = metadata_mutation_syscalls();
+
+        assert!(syscalls.contains(&libc::SYS_chmod));
+        assert!(syscalls.contains(&libc::SYS_chown));
+        assert!(syscalls.contains(&libc::SYS_utimensat));
     }
 }
