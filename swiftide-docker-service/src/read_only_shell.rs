@@ -6,47 +6,8 @@ use tonic::Status;
 use crate::command_cleanup::CommandCleanup;
 #[cfg(target_os = "linux")]
 use crate::read_only_sandbox;
-
-pub(crate) struct ReadOnlyWorkdir {
-    path: std::path::PathBuf,
-}
-
-impl ReadOnlyWorkdir {
-    pub(crate) fn try_new(path: impl Into<std::path::PathBuf>) -> Result<Self, Status> {
-        let path = path.into();
-        let metadata = std::fs::metadata(&path).map_err(|e| {
-            Status::failed_precondition(format!(
-                "read-only shell workdir does not exist: {}: {e}",
-                path.display()
-            ))
-        })?;
-
-        if !metadata.is_dir() {
-            return Err(Status::failed_precondition(format!(
-                "read-only shell workdir is not a directory: {}",
-                path.display()
-            )));
-        }
-
-        Ok(Self { path })
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-pub(crate) struct CommandEnv {
-    clear: bool,
-    remove: Vec<String>,
-    set: HashMap<String, String>,
-}
-
-impl CommandEnv {
-    pub(crate) fn new(clear: bool, remove: Vec<String>, set: HashMap<String, String>) -> Self {
-        Self { clear, remove, set }
-    }
-}
+#[cfg(target_os = "linux")]
+use crate::shell_script;
 
 pub(crate) struct SpawnedReadOnlyCommand {
     child: Child,
@@ -66,13 +27,16 @@ impl SpawnedReadOnlyCommand {
 
 pub(crate) fn spawn(
     command: &str,
-    workdir: ReadOnlyWorkdir,
-    env: CommandEnv,
+    workdir: &Path,
+    env_clear: bool,
+    env_remove: Vec<String>,
+    envs: HashMap<String, String>,
 ) -> Result<SpawnedReadOnlyCommand, Status> {
+    validate_workdir(workdir)?;
+
     #[cfg(not(target_os = "linux"))]
     {
-        let CommandEnv { clear, remove, set } = env;
-        let _ = (command, workdir.path(), clear, remove, set);
+        let _ = (command, workdir, env_clear, env_remove, envs);
         Err(Status::unimplemented(
             "read-only shell is only supported on Linux",
         ))
@@ -84,8 +48,8 @@ pub(crate) fn spawn(
         let prepared = read_only_command(command, has_bash)?;
         let mut cmd = prepared.command;
 
-        env.apply(&mut cmd);
-        cmd.current_dir(workdir.path())
+        apply_env(&mut cmd, env_clear, env_remove, envs);
+        cmd.current_dir(workdir)
             .process_group(0)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
@@ -103,6 +67,24 @@ pub(crate) fn spawn(
             child,
             _script_dir: prepared.script_dir,
         })
+    }
+}
+
+fn validate_workdir(path: &Path) -> Result<(), Status> {
+    let metadata = std::fs::metadata(path).map_err(|e| {
+        Status::failed_precondition(format!(
+            "read-only shell workdir does not exist: {}: {e}",
+            path.display()
+        ))
+    })?;
+
+    if metadata.is_dir() {
+        Ok(())
+    } else {
+        Err(Status::failed_precondition(format!(
+            "read-only shell workdir is not a directory: {}",
+            path.display()
+        )))
     }
 }
 
@@ -141,30 +123,32 @@ impl ScriptDir {
 }
 
 #[cfg(target_os = "linux")]
-impl CommandEnv {
-    fn apply(&self, cmd: &mut tokio::process::Command) {
-        if self.clear {
-            tracing::info!("clearing environment variables");
-            cmd.env_clear();
-        }
-
-        for var in &self.remove {
-            tracing::info!(var, "clearing environment variable");
-            cmd.env_remove(var);
-        }
-
-        for (key, value) in &self.set {
-            tracing::info!(key, "setting environment variable");
-            cmd.env(key, value);
-        }
-
-        if self.should_set_default("GIT_OPTIONAL_LOCKS") {
-            cmd.env("GIT_OPTIONAL_LOCKS", "0");
-        }
+fn apply_env(
+    cmd: &mut tokio::process::Command,
+    clear: bool,
+    remove: Vec<String>,
+    set: HashMap<String, String>,
+) {
+    if clear {
+        tracing::info!("clearing environment variables");
+        cmd.env_clear();
     }
 
-    fn should_set_default(&self, key: &str) -> bool {
-        !self.set.contains_key(key) && !self.remove.iter().any(|var| var == key)
+    let set_git_optional_locks = !set.contains_key("GIT_OPTIONAL_LOCKS")
+        && !remove.iter().any(|var| var == "GIT_OPTIONAL_LOCKS");
+
+    for var in remove {
+        tracing::info!(var, "clearing environment variable");
+        cmd.env_remove(var);
+    }
+
+    for (key, value) in set {
+        tracing::info!(key, "setting environment variable");
+        cmd.env(key, value);
+    }
+
+    if set_git_optional_locks {
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
     }
 }
 
@@ -190,10 +174,10 @@ fn read_only_command(command: &str, has_bash: bool) -> Result<PreparedCommand, S
             |e| Status::internal(format!("Failed to set read-only script permissions: {e:?}")),
         )?;
 
-        if has_bash && is_bash_shebang(first_line) {
+        if has_bash && shell_script::is_bash_shebang(first_line) {
             let mut cmd = tokio::process::Command::new("/bin/bash");
             cmd.arg("--login");
-            if let Some(args) = shebang_args(first_line) {
+            if let Some(args) = shell_script::bash_args(first_line) {
                 cmd.args(args);
             }
             cmd.arg(script_path);
@@ -203,7 +187,7 @@ fn read_only_command(command: &str, has_bash: bool) -> Result<PreparedCommand, S
             });
         }
 
-        let (interpreter, args) = shebang_command(first_line)
+        let (interpreter, args) = shell_script::command(first_line)
             .ok_or_else(|| Status::internal(format!("Failed to parse shebang: {first_line}")))?;
         let mut cmd = tokio::process::Command::new(interpreter);
         cmd.args(args);
@@ -224,46 +208,4 @@ fn read_only_command(command: &str, has_bash: bool) -> Result<PreparedCommand, S
         command: cmd,
         script_dir: None,
     })
-}
-
-#[cfg(target_os = "linux")]
-fn is_bash_shebang(line: &str) -> bool {
-    let Some(command) = line.strip_prefix("#!") else {
-        return false;
-    };
-
-    let mut parts = command.split_whitespace();
-    match (parts.next(), parts.next()) {
-        (Some(interpreter), _) if interpreter.ends_with("/bash") || interpreter == "bash" => true,
-        (Some(interpreter), Some(program))
-            if interpreter.ends_with("/env")
-                && (program == "bash" || program.ends_with("/bash")) =>
-        {
-            true
-        }
-        _ => false,
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn shebang_command(line: &str) -> Option<(&str, Vec<&str>)> {
-    let command = line.strip_prefix("#!")?;
-    let mut parts = command.split_whitespace();
-    let interpreter = parts.next()?;
-
-    Some((interpreter, parts.collect()))
-}
-
-#[cfg(target_os = "linux")]
-fn shebang_args(line: &str) -> Option<Vec<&str>> {
-    let (interpreter, mut parts) = shebang_command(line)?;
-
-    if interpreter.ends_with("/env") {
-        if parts.is_empty() {
-            return None;
-        }
-        parts.remove(0);
-    }
-
-    Some(parts)
 }

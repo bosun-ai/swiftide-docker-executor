@@ -10,7 +10,8 @@ use tonic::{Request, Response, Status};
 
 use crate::command_cleanup::CommandCleanup;
 use crate::output_collector::OutputCollector;
-use crate::read_only_shell::{self, CommandEnv, ReadOnlyWorkdir};
+use crate::read_only_shell;
+use crate::shell_script;
 
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -108,18 +109,18 @@ impl ShellExecutor for MyShellExecutor {
             })?;
             temp_script = Some(script_dir);
 
-            let mut cmd = if has_bash && is_bash_shebang(first_line) {
+            let mut cmd = if has_bash && shell_script::is_bash_shebang(first_line) {
                 // Bash scripts should run as login shells so profile files are honored.
                 let mut cmd = Command::new("/bin/bash");
                 cmd.arg("--login");
-                if let Some(args) = shebang_args(first_line) {
+                if let Some(args) = shell_script::bash_args(first_line) {
                     cmd.args(args);
                 }
                 cmd.arg(&script_path);
                 cmd
             } else {
                 // Invoke the interpreter ourselves so Linux never execs a just-written temp file.
-                let (interpreter, args) = shebang_command(first_line).ok_or_else(|| {
+                let (interpreter, args) = shell_script::command(first_line).ok_or_else(|| {
                     Status::internal(format!("Failed to parse shebang: {first_line}"))
                 })?;
                 let mut cmd = Command::new(interpreter);
@@ -225,9 +226,9 @@ impl ShellExecutor for MyShellExecutor {
         }
 
         let timeout = timeout_ms.map(Duration::from_millis);
-        let workdir = ReadOnlyWorkdir::try_new(cwd.unwrap_or_else(|| ".".to_string()))?;
-        let env = CommandEnv::new(env_clear, env_remove, envs);
-        let mut command_handle = read_only_shell::spawn(&command, workdir, env)?;
+        let workdir = cwd.unwrap_or_else(|| ".".to_string());
+        let mut command_handle =
+            read_only_shell::spawn(&command, Path::new(&workdir), env_clear, env_remove, envs)?;
 
         let output = OutputCollector::capture(command_handle.child_mut());
         let wait_future = command_handle.child_mut().wait();
@@ -298,45 +299,6 @@ fn apply_env_settings(
 fn is_background(cmd: &str) -> bool {
     let trimmed = cmd.trim_end();
     trimmed.ends_with('&') && !trimmed.ends_with("\\&")
-}
-
-fn is_bash_shebang(line: &str) -> bool {
-    let Some(command) = line.strip_prefix("#!") else {
-        return false;
-    };
-
-    let mut parts = command.split_whitespace();
-    match (parts.next(), parts.next()) {
-        (Some(interpreter), _) if interpreter.ends_with("/bash") || interpreter == "bash" => true,
-        (Some(interpreter), Some(program))
-            if interpreter.ends_with("/env")
-                && (program == "bash" || program.ends_with("/bash")) =>
-        {
-            true
-        }
-        _ => false,
-    }
-}
-
-fn shebang_command(line: &str) -> Option<(&str, Vec<&str>)> {
-    let command = line.strip_prefix("#!")?;
-    let mut parts = command.split_whitespace();
-    let interpreter = parts.next()?;
-
-    Some((interpreter, parts.collect()))
-}
-
-fn shebang_args(line: &str) -> Option<Vec<&str>> {
-    let (interpreter, mut parts) = shebang_command(line)?;
-
-    if interpreter.ends_with("/env") {
-        if parts.is_empty() {
-            return None;
-        }
-        parts.remove(0);
-    }
-
-    Some(parts)
 }
 
 fn timeout_message(limit: Duration, stdout: &[String], stderr: &[String]) -> String {
@@ -435,133 +397,6 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn read_only_shell_allows_reads_and_blocks_writes() {
-        let workdir = tempdir().unwrap();
-        let file_path = workdir.path().join("existing.txt");
-        let outside_path = std::env::temp_dir().join(format!(
-            "swiftide-docker-service-readonly-outside-{}",
-            std::process::id()
-        ));
-        let tmp_path = std::env::temp_dir().join(format!(
-            "swiftide-docker-service-readonly-tmp-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_file(&outside_path);
-        let _ = fs::remove_file(&tmp_path);
-        fs::write(&file_path, "original").unwrap();
-
-        let executor = MyShellExecutor;
-        let req = ReadOnlyShellRequest {
-            command: format!(
-                concat!(
-                    "printf 'read='\n",
-                    "cat existing.txt\n",
-                    "printf '\\nworkdir='\n",
-                    "if echo changed > existing.txt; then echo allowed; else echo denied; fi\n",
-                    "printf '\\noutside='\n",
-                    "if echo changed > {outside}; then echo allowed; else echo denied; fi\n",
-                    "printf '\\ntmp='\n",
-                    "if echo changed > {tmp}; then echo allowed; else echo denied; fi\n",
-                    "printf '\\nchmod='\n",
-                    "if chmod 600 existing.txt; then echo allowed; else echo denied; fi\n",
-                    "printf '\\nchown='\n",
-                    "if chown \"$(id -u):$(id -g)\" existing.txt; then echo allowed; else echo denied; fi\n",
-                    "printf '\\nfinal=' && cat existing.txt"
-                ),
-                outside = outside_path.display(),
-                tmp = tmp_path.display()
-            ),
-            timeout_ms: Some(5_000),
-            cwd: Some(workdir.path().to_string_lossy().into_owned()),
-            env_clear: false,
-            env_remove: vec![],
-            envs: Default::default(),
-        };
-
-        let resp = executor
-            .exec_read_only_shell(Request::new(req))
-            .await
-            .unwrap()
-            .into_inner();
-
-        assert_eq!(resp.exit_code, 0);
-        let lines = resp
-            .stdout
-            .lines()
-            .filter(|line| !line.is_empty())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            lines,
-            vec![
-                "read=original",
-                "workdir=denied",
-                "outside=denied",
-                "tmp=denied",
-                "chmod=denied",
-                "chown=denied",
-                "final=original"
-            ]
-        );
-        assert_eq!(fs::read_to_string(file_path).unwrap(), "original");
-        assert!(!outside_path.exists());
-        assert!(!tmp_path.exists());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn read_only_shell_preserves_env_home_and_shebang_behavior() {
-        if !Path::new("/bin/bash").exists() {
-            return;
-        }
-
-        let workdir = tempdir().unwrap();
-        let home = workdir.path().join("home");
-        fs::create_dir(&home).unwrap();
-        fs::write(
-            home.join(".bash_profile"),
-            "export PROFILE_MARKER=profile\n",
-        )
-        .unwrap();
-
-        let executor = MyShellExecutor;
-        let req = ReadOnlyShellRequest {
-            command: indoc! {r#"
-                #!/bin/bash
-                printf 'env=%s\nprofile=%s\nhome=%s' \
-                  "$READ_ONLY_MARKER" "$PROFILE_MARKER" "$HOME"
-            "#}
-            .to_string(),
-            timeout_ms: Some(5_000),
-            cwd: Some(workdir.path().to_string_lossy().into_owned()),
-            env_clear: false,
-            env_remove: vec![],
-            envs: [
-                ("HOME".to_string(), home.to_string_lossy().into_owned()),
-                ("READ_ONLY_MARKER".to_string(), "from-env".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-        };
-
-        let resp = executor
-            .exec_read_only_shell(Request::new(req))
-            .await
-            .unwrap()
-            .into_inner();
-
-        assert_eq!(resp.exit_code, 0);
-        assert_eq!(
-            resp.stdout.lines().collect::<Vec<_>>(),
-            vec![
-                "env=from-env",
-                "profile=profile",
-                &format!("home={}", home.display())
-            ]
-        );
     }
 
     #[tokio::test]

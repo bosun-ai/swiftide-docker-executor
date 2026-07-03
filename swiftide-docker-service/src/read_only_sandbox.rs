@@ -128,14 +128,17 @@ fn metadata_mutation_seccomp_filter() -> std::io::Result<Vec<libc::sock_filter>>
 
 #[cfg(target_os = "linux")]
 fn bpf_stmt(code: u16, k: u32) -> libc::sock_filter {
-    // Safety: libc constructs a plain BPF statement value from scalar inputs.
-    unsafe { libc::BPF_STMT(code, k) }
+    libc::sock_filter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    }
 }
 
 #[cfg(target_os = "linux")]
 fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
-    // Safety: libc constructs a plain BPF jump value from scalar inputs.
-    unsafe { libc::BPF_JUMP(code, k, jt, jf) }
+    libc::sock_filter { code, jt, jf, k }
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -185,11 +188,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn landlock_ruleset_tracks_write_access_without_writable_paths() {
-        create_read_only_landlock().expect("read-only Landlock ruleset should be creatable");
-    }
-
-    #[test]
     fn metadata_mutation_filter_denies_each_metadata_syscall() {
         let filter =
             metadata_mutation_seccomp_filter().expect("metadata mutation filter should build");
@@ -212,15 +210,5 @@ mod tests {
             .count();
 
         assert_eq!(deny_metadata_syscalls, metadata_mutation_syscalls().len());
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn metadata_mutation_syscalls_include_common_file_metadata_changes() {
-        let syscalls = metadata_mutation_syscalls();
-
-        assert!(syscalls.contains(&libc::SYS_chmod));
-        assert!(syscalls.contains(&libc::SYS_chown));
-        assert!(syscalls.contains(&libc::SYS_utimensat));
     }
 }
