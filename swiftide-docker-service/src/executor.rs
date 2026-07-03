@@ -399,6 +399,53 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn read_only_shell_allows_reads_and_blocks_writes() {
+        let workdir = tempdir().unwrap();
+        let file_path = workdir.path().join("existing.txt");
+        let outside_path = std::env::temp_dir().join(format!(
+            "swiftide-docker-service-readonly-outside-{}",
+            std::process::id()
+        ));
+        let tmp_path = std::env::temp_dir().join(format!(
+            "swiftide-docker-service-readonly-tmp-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&outside_path);
+        let _ = fs::remove_file(&tmp_path);
+        fs::write(&file_path, "original").unwrap();
+
+        let req = ReadOnlyShellRequest {
+            command: format!(
+                "cat existing.txt\n\
+                 if echo changed > existing.txt; then echo workdir-allowed; fi\n\
+                 if echo changed > {outside}; then echo outside-allowed; fi\n\
+                 if echo changed > {tmp}; then echo tmp-allowed; fi\n\
+                 if chmod 600 existing.txt; then echo chmod-allowed; fi",
+                outside = outside_path.display(),
+                tmp = tmp_path.display()
+            ),
+            timeout_ms: Some(5_000),
+            cwd: Some(workdir.path().to_string_lossy().into_owned()),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+        };
+
+        let resp = MyShellExecutor
+            .exec_read_only_shell(Request::new(req))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.lines().collect::<Vec<_>>(), vec!["original"]);
+        assert_eq!(fs::read_to_string(file_path).unwrap(), "original");
+        assert!(!outside_path.exists());
+        assert!(!tmp_path.exists());
+    }
+
     #[tokio::test]
     async fn test_exec_shell_shebang_env_sh() {
         let executor = MyShellExecutor;
