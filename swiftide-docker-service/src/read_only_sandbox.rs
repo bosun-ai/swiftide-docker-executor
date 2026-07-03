@@ -58,6 +58,40 @@ fn enforce_read_only_landlock(ruleset: landlock::RulesetCreated) -> std::io::Res
 
 #[cfg(target_os = "linux")]
 fn install_metadata_mutation_seccomp() -> std::io::Result<()> {
+    let mut filter = metadata_mutation_seccomp_filter()?;
+
+    let mut program = libc::sock_fprog {
+        len: filter
+            .len()
+            .try_into()
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?,
+        filter: filter.as_mut_ptr(),
+    };
+
+    // Safety: prctl is called with documented SECCOMP arguments. The filter
+    // pointer stays valid for the duration of the syscall.
+    unsafe {
+        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        if libc::prctl(
+            libc::PR_SET_SECCOMP,
+            libc::SECCOMP_MODE_FILTER,
+            &mut program as *mut libc::sock_fprog,
+            0,
+            0,
+        ) != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn metadata_mutation_seccomp_filter() -> std::io::Result<Vec<libc::sock_filter>> {
     let syscalls = metadata_mutation_syscalls();
     if syscalls.is_empty() {
         return Err(std::io::Error::other(
@@ -89,34 +123,7 @@ fn install_metadata_mutation_seccomp() -> std::io::Result<()> {
         libc::SECCOMP_RET_ALLOW,
     ));
 
-    let mut program = libc::sock_fprog {
-        len: filter
-            .len()
-            .try_into()
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?,
-        filter: filter.as_mut_ptr(),
-    };
-
-    // Safety: prctl is called with documented SECCOMP arguments. The filter
-    // pointer stays valid for the duration of the syscall.
-    unsafe {
-        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-
-        if libc::prctl(
-            libc::PR_SET_SECCOMP,
-            libc::SECCOMP_MODE_FILTER,
-            &mut program as *mut libc::sock_fprog,
-            0,
-            0,
-        ) != 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
-
-    Ok(())
+    Ok(filter)
 }
 
 #[cfg(target_os = "linux")]
@@ -171,4 +178,49 @@ fn metadata_mutation_syscalls() -> &'static [libc::c_long] {
 #[cfg(target_os = "linux")]
 fn sandbox_error(error: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(error.to_string())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn landlock_ruleset_tracks_write_access_without_writable_paths() {
+        create_read_only_landlock().expect("read-only Landlock ruleset should be creatable");
+    }
+
+    #[test]
+    fn metadata_mutation_filter_denies_each_metadata_syscall() {
+        let filter =
+            metadata_mutation_seccomp_filter().expect("metadata mutation filter should build");
+
+        assert_eq!(
+            filter.first().map(|instruction| instruction.code),
+            Some((libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16)
+        );
+        assert_eq!(
+            filter.last().map(|instruction| instruction.k),
+            Some(libc::SECCOMP_RET_ALLOW)
+        );
+
+        let deny_metadata_syscalls = filter
+            .iter()
+            .filter(|instruction| {
+                instruction.code == (libc::BPF_RET | libc::BPF_K) as u16
+                    && instruction.k == (libc::SECCOMP_RET_ERRNO | libc::EPERM as u32)
+            })
+            .count();
+
+        assert_eq!(deny_metadata_syscalls, metadata_mutation_syscalls().len());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn metadata_mutation_syscalls_include_common_file_metadata_changes() {
+        let syscalls = metadata_mutation_syscalls();
+
+        assert!(syscalls.contains(&libc::SYS_chmod));
+        assert!(syscalls.contains(&libc::SYS_chown));
+        assert!(syscalls.contains(&libc::SYS_utimensat));
+    }
 }
