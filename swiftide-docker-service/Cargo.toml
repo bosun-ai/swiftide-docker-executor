@@ -16,10 +16,12 @@ categories.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tonic.workspace = true
 prost.workspace = true
+bytes.workspace = true
 tonic-prost.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3" }
 futures-util.workspace = true
+async-stream.workspace = true
 tempfile = "3"
 libc = "0.2"
 

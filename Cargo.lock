@@ -82,9 +82,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "astral-tokio-tar"
@@ -350,6 +350,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "cfg_aliases"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -430,9 +436,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-epoch"
-version = "0.9.18"
+version = "0.9.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+checksum = "2d6914041f254d6e9176c01941b21115dcfb7089e55135a35411081bd106ef3f"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -1454,6 +1460,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
+name = "nix"
+version = "0.31.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d6d0705320c1e6ba1d912b5e37cf18071b6c2e9b7fa8215a1e8a7651966f5d3"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2359,7 +2377,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swiftide-agents"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?branch=master#9c9746cda928f589f2d594e29e1e5a5d79cb8a6b"
+source = "git+https://github.com/bosun-ai/swiftide?rev=f3477b5d20de401fa6398f1348bc49e9c2956a72#f3477b5d20de401fa6398f1348bc49e9c2956a72"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2369,6 +2387,7 @@ dependencies = [
  "fs-err",
  "futures-util",
  "indoc",
+ "nix",
  "schemars",
  "serde",
  "serde_json",
@@ -2376,6 +2395,7 @@ dependencies = [
  "strum_macros 0.28.0",
  "swiftide-core",
  "swiftide-indexing",
+ "swiftide-tasks",
  "thiserror",
  "tokio",
  "tokio-stream",
@@ -2386,7 +2406,7 @@ dependencies = [
 [[package]]
 name = "swiftide-core"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?branch=master#9c9746cda928f589f2d594e29e1e5a5d79cb8a6b"
+source = "git+https://github.com/bosun-ai/swiftide?rev=f3477b5d20de401fa6398f1348bc49e9c2956a72#f3477b5d20de401fa6398f1348bc49e9c2956a72"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2424,7 +2444,6 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "ignore",
- "indoc",
  "insta",
  "pretty_assertions",
  "prost",
@@ -2448,6 +2467,8 @@ dependencies = [
 name = "swiftide-docker-service"
 version = "0.13.7"
 dependencies = [
+ "async-stream",
+ "bytes",
  "futures-util",
  "indoc",
  "libc",
@@ -2466,7 +2487,7 @@ dependencies = [
 [[package]]
 name = "swiftide-indexing"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?branch=master#9c9746cda928f589f2d594e29e1e5a5d79cb8a6b"
+source = "git+https://github.com/bosun-ai/swiftide?rev=f3477b5d20de401fa6398f1348bc49e9c2956a72#f3477b5d20de401fa6398f1348bc49e9c2956a72"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2492,7 +2513,7 @@ dependencies = [
 [[package]]
 name = "swiftide-macros"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?branch=master#9c9746cda928f589f2d594e29e1e5a5d79cb8a6b"
+source = "git+https://github.com/bosun-ai/swiftide?rev=f3477b5d20de401fa6398f1348bc49e9c2956a72#f3477b5d20de401fa6398f1348bc49e9c2956a72"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2504,6 +2525,19 @@ dependencies = [
  "serde",
  "serde_json",
  "syn",
+]
+
+[[package]]
+name = "swiftide-tasks"
+version = "0.32.1"
+source = "git+https://github.com/bosun-ai/swiftide?rev=f3477b5d20de401fa6398f1348bc49e9c2956a72#f3477b5d20de401fa6398f1348bc49e9c2956a72"
+dependencies = [
+ "async-trait",
+ "dyn-clone",
+ "futures-util",
+ "swiftide-core",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

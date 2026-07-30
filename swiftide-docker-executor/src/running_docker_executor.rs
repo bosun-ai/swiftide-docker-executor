@@ -357,47 +357,47 @@ impl RunningDockerExecutor {
             timeout_ms,
             cwd: Some(workdir.display().to_string()),
         });
+        let mut events = client
+            .exec_shell(request)
+            .await
+            .map_err(anyhow::Error::from)?
+            .into_inner();
 
-        let response = match client.exec_shell(request).await {
-            Ok(resp) => resp.into_inner(),
-            Err(status) => {
-                if status.code() == tonic::Code::DeadlineExceeded {
-                    if let Some(limit) = timeout {
-                        let message = status.message().to_string();
-                        let output = if message.is_empty() {
-                            CommandOutput::empty()
-                        } else {
-                            CommandOutput::new(message)
-                        };
-
-                        return Err(CommandError::TimedOut {
-                            timeout: limit,
-                            output,
-                        });
-                    }
-
-                    return Err(CommandError::ExecutorError(status.into()));
+        let mut output = Vec::new();
+        while let Some(event) = events.message().await.map_err(anyhow::Error::from)? {
+            match event.event {
+                Some(codegen::shell_event::Event::Output(bytes)) => {
+                    output.extend_from_slice(&bytes);
                 }
-
-                return Err(CommandError::ExecutorError(status.into()));
+                Some(codegen::shell_event::Event::Result(result)) => {
+                    let output = CommandOutput::new(output);
+                    return match result.outcome {
+                        Some(codegen::shell_result::Outcome::ExitCode(0)) => Ok(output),
+                        Some(codegen::shell_result::Outcome::ExitCode(_)) => {
+                            Err(CommandError::NonZeroExit(output))
+                        }
+                        Some(codegen::shell_result::Outcome::TimedOutAfterMs(timeout_ms)) => {
+                            Err(CommandError::TimedOut {
+                                timeout: Duration::from_millis(timeout_ms),
+                                output,
+                            })
+                        }
+                        None => Err(CommandError::ExecutorError(anyhow::anyhow!(
+                            "Shell service returned a result without an outcome"
+                        ))),
+                    };
+                }
+                None => {
+                    return Err(CommandError::ExecutorError(anyhow::anyhow!(
+                        "Shell service returned an event without a payload"
+                    )));
+                }
             }
-        };
-
-        let codegen::ShellResponse {
-            stdout,
-            stderr,
-            exit_code,
-        } = response;
-
-        let stdout = stdout.trim().to_string();
-        let stderr = stderr.trim().to_string();
-        let output = CommandOutput::from_parts(stdout, stderr);
-
-        if exit_code == 0 {
-            Ok(output)
-        } else {
-            Err(CommandError::NonZeroExit(output))
         }
+
+        Err(CommandError::ExecutorError(anyhow::anyhow!(
+            "Shell output stream ended without an execution result"
+        )))
     }
 
     #[tracing::instrument(skip(self))]
@@ -419,21 +419,13 @@ impl RunningDockerExecutor {
         content: &str,
         timeout: Option<Duration>,
     ) -> Result<CommandOutput, CommandError> {
-        let cmd = indoc::formatdoc! {
-            r#"
-            cat << 'EOFKWAAK' > {path}
-            {content}
-            EOFKWAAK"#,
-            path = path.display(),
-            content = content.trim_end()
-
-        };
+        let cmd = write_file_command(path, content);
 
         let write_file_result = self.exec_shell(&cmd, workdir, timeout).await;
 
         // If the directory or file does not exist, create it
         if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result {
-            let output = format!("{}\n{}", write_file.stdout, write_file.stderr).to_lowercase();
+            let output = write_file.to_string_lossy().to_lowercase();
             let missing_path = [
                 "no such file or directory",
                 "directory nonexistent",
@@ -498,6 +490,22 @@ impl RunningDockerExecutor {
 
         Ok(())
     }
+}
+
+fn write_file_command(path: &Path, content: &str) -> String {
+    let path = path.to_string_lossy();
+    let mut command = String::with_capacity(content.len() + path.len() + 16);
+    command.push_str("printf %s '");
+    for character in content.chars() {
+        if character == '\'' {
+            command.push_str("'\\''");
+        } else {
+            command.push(character);
+        }
+    }
+    command.push_str("' > ");
+    command.push_str(&path);
+    command
 }
 
 fn duration_to_millis(duration: Duration) -> u64 {

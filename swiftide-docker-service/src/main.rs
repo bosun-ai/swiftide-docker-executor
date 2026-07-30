@@ -6,7 +6,6 @@ mod command_cleanup;
 mod executor;
 #[cfg(feature = "file-loader")]
 mod loader;
-mod output_collector;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

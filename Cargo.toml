@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.dependencies]
 tonic = { version = "0.14" }
 prost = "0.14"
-tonic-build = "0.14"
+bytes = "1"
 tonic-prost-build = "0.14"
 tonic-prost = "0.14"
 tracing = "0.1"
@@ -13,6 +13,7 @@ tokio = { version = "1", features = ["full"] }
 swiftide-core = "0.32"
 swiftide-indexing = "0.32"
 futures-util = "0.3"
+async-stream = "0.3"
 
 [workspace.package]
 description = "A docker executor for swiftide agent tools"
@@ -27,6 +28,6 @@ version = "0.13.7"
 categories = ["asynchronous"]
 
 [patch.crates-io]
-swiftide-core = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-core", branch = "master" }
-swiftide-indexing = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-indexing", branch = "master" }
-swiftide-agents = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-agents", branch = "master" }
+swiftide-core = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-core", rev = "f3477b5d20de401fa6398f1348bc49e9c2956a72" }
+swiftide-indexing = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-indexing", rev = "f3477b5d20de401fa6398f1348bc49e9c2956a72" }
+swiftide-agents = { git = "https://github.com/bosun-ai/swiftide", package = "swiftide-agents", rev = "f3477b5d20de401fa6398f1348bc49e9c2956a72" }

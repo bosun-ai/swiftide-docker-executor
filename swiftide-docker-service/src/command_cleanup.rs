@@ -1,75 +1,82 @@
 use std::io::{self, ErrorKind};
+use std::process::ExitStatus;
 
 use libc::{EINTR, ESRCH, SIGKILL, kill, pid_t};
 use tokio::process::Child;
 
 const KILL_EINTR_RETRIES: usize = 3;
 
-/// Cleans up a command after it exceeded its deadline.
-pub(crate) struct CommandCleanup {
-    child: Child,
+/// Owns a child process and terminates its process group when execution is cancelled.
+pub(crate) struct CommandGuard {
+    child: Option<Child>,
     process_group: Option<ProcessGroup>,
 }
 
-impl CommandCleanup {
-    /// Creates cleanup for a spawned command and its process group.
+impl CommandGuard {
     pub(crate) fn new(child: Child) -> Self {
-        let process_group = child
-            .id()
-            .and_then(|pid| match ProcessGroup::from_child_pid(pid) {
-                Ok(process_group) => Some(process_group),
-                Err(err) => {
-                    tracing::warn!(
-                        pid,
-                        ?err,
-                        "Timed out command PID cannot be used as a process group"
-                    );
-                    None
-                }
-            });
+        let process_group = child.id().and_then(|pid| {
+            ProcessGroup::from_child_pid(pid)
+                .inspect_err(|err| {
+                    tracing::warn!(pid, ?err, "Child PID cannot be used as a process group");
+                })
+                .ok()
+        });
 
         Self {
-            child,
+            child: Some(child),
             process_group,
         }
     }
 
-    /// Signals the command for termination and continues reaping it in the background.
-    pub(crate) fn terminate(mut self) {
-        if let Some(process_group) = self.process_group {
+    pub(crate) async fn wait(&mut self) -> io::Result<ExitStatus> {
+        let status = self
+            .child
+            .as_mut()
+            .expect("command guard must own a child")
+            .wait()
+            .await?;
+        self.child.take();
+        self.process_group.take();
+        Ok(status)
+    }
+
+    pub(crate) fn terminate(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+
+        if let Some(process_group) = self.process_group.take() {
             match process_group.kill() {
                 Ok(()) => {}
                 Err(err) if err.raw_os_error() == Some(ESRCH) => {
-                    tracing::debug!("Timed out command process group is already gone");
+                    tracing::debug!("Command process group is already gone");
                 }
                 Err(err) => {
-                    tracing::warn!(?err, "Failed to kill timed out command process group");
+                    tracing::warn!(?err, "Failed to kill command process group");
                 }
             }
         }
 
-        if let Err(err) = self.child.start_kill() {
+        if let Err(err) = child.start_kill() {
             if err.kind() == ErrorKind::InvalidInput {
-                tracing::debug!(?err, "Timed out command child is already gone");
+                tracing::debug!(?err, "Command child is already gone");
             } else {
-                tracing::warn!(?err, "Failed to start kill on timed out command");
+                tracing::warn!(?err, "Failed to start command kill");
             }
         }
 
-        self.reap_in_background();
-    }
-
-    fn reap_in_background(mut self) {
         tokio::spawn(async move {
-            match self.child.wait().await {
-                Ok(status) => {
-                    tracing::debug!(?status, "Reaped timed out command");
-                }
-                Err(err) => {
-                    tracing::warn!(?err, "Failed to reap timed out command");
-                }
+            match child.wait().await {
+                Ok(status) => tracing::debug!(?status, "Reaped command"),
+                Err(err) => tracing::warn!(?err, "Failed to reap command"),
             }
         });
+    }
+}
+
+impl Drop for CommandGuard {
+    fn drop(&mut self) {
+        self.terminate();
     }
 }
 
