@@ -1276,4 +1276,14 @@ async fn test_background_shell_command_returns_immediately() {
         .await
         .unwrap();
     assert_eq!(echo.to_string_lossy().trim(), "done");
+
+    let output = executor
+        .exec_cmd(
+            &Command::shell("sleep 30 >/dev/null 2>&1 & echo ready")
+                .with_timeout(Duration::from_secs(3)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output.to_string_lossy(), "ready\n");
 }

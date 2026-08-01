@@ -133,7 +133,7 @@ fn shell_events(
                         Status::internal(format!("Failed to read command output: {err}"))
                     })
                 }
-                status = process.wait(), if exit_status.is_none() => {
+                status = process.wait_for_shell(), if exit_status.is_none() => {
                     status.map(ProcessEvent::Exit).map_err(|err| {
                         Status::internal(format!("Failed to wait for command: {err}"))
                     })

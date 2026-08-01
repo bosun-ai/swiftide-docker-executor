@@ -13,10 +13,12 @@ impl CommandGuard {
         Self { child: Some(child) }
     }
 
-    pub(crate) async fn wait(&mut self) -> io::Result<ExitStatus> {
+    /// Waits for the shell without waiting for redirected background children.
+    pub(crate) async fn wait_for_shell(&mut self) -> io::Result<ExitStatus> {
         self.child
             .as_mut()
             .expect("command guard must own a child")
+            .inner_mut()
             .wait()
             .await
     }
