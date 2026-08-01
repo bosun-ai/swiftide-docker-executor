@@ -2504,6 +2504,7 @@ dependencies = [
  "futures-util",
  "indoc",
  "libc",
+ "process-wrap",
  "prost",
  "swiftide-core",
  "swiftide-indexing",

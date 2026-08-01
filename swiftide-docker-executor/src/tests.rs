@@ -357,7 +357,7 @@ async fn test_overrides_include_git_respects_ignore() {
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_write_and_read_file_with_quotes() {
     let content = "This is a \"test\" with 'quotes' and trailing whitespace.\n\n";
-    let path = Path::new("test_file.txt");
+    let path = Path::new("directory with spaces/file's name.txt");
 
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE)

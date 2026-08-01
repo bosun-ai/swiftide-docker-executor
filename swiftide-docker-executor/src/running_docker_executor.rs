@@ -7,6 +7,7 @@ use bollard::{
 use codegen::shell_executor_client::ShellExecutorClient;
 use futures_util::Stream;
 use std::{
+    borrow::Cow,
     collections::HashMap,
     net::IpAddr,
     path::{Path, PathBuf},
@@ -63,10 +64,15 @@ impl ToolExecutor for RunningDockerExecutor {
         let timeout = self.resolve_timeout(cmd);
 
         match cmd {
-            Command::Shell { command, .. } => self.exec_shell(command, &workdir, timeout).await,
-            Command::ReadFile { path, .. } => self.exec_read_file(&workdir, path, timeout).await,
+            Command::Shell { command, .. } => {
+                self.exec_shell(command, workdir.as_ref(), timeout).await
+            }
+            Command::ReadFile { path, .. } => {
+                self.exec_read_file(workdir.as_ref(), path, timeout).await
+            }
             Command::WriteFile { path, content, .. } => {
-                self.exec_write_file(&workdir, path, content, timeout).await
+                self.exec_write_file(workdir.as_ref(), path, content, timeout)
+                    .await
             }
             _ => unimplemented!(),
         }
@@ -321,11 +327,11 @@ impl RunningDockerExecutor {
         ReceiverStream::new(rx)
     }
 
-    fn resolve_workdir(&self, cmd: &Command) -> PathBuf {
+    fn resolve_workdir<'a>(&'a self, cmd: &'a Command) -> Cow<'a, Path> {
         match cmd.current_dir_path() {
-            Some(path) if path.is_absolute() => path.to_path_buf(),
-            Some(path) => self.workdir.join(path),
-            None => self.workdir.clone(),
+            Some(path) if path.is_absolute() => Cow::Borrowed(path),
+            Some(path) => Cow::Owned(self.workdir.join(path)),
+            None => Cow::Borrowed(&self.workdir),
         }
     }
 
@@ -369,23 +375,19 @@ impl RunningDockerExecutor {
                 Some(codegen::shell_event::Event::Output(bytes)) => {
                     output.extend_from_slice(&bytes);
                 }
-                Some(codegen::shell_event::Event::Result(result)) => {
+                Some(codegen::shell_event::Event::ExitCode(exit_code)) => {
                     let output = CommandOutput::new(output);
-                    return match result.outcome {
-                        Some(codegen::shell_result::Outcome::ExitCode(0)) => Ok(output),
-                        Some(codegen::shell_result::Outcome::ExitCode(_)) => {
-                            Err(CommandError::NonZeroExit(output))
-                        }
-                        Some(codegen::shell_result::Outcome::TimedOutAfterMs(timeout_ms)) => {
-                            Err(CommandError::TimedOut {
-                                timeout: Duration::from_millis(timeout_ms),
-                                output,
-                            })
-                        }
-                        None => Err(CommandError::ExecutorError(anyhow::anyhow!(
-                            "Shell service returned a result without an outcome"
-                        ))),
+                    return if exit_code == 0 {
+                        Ok(output)
+                    } else {
+                        Err(CommandError::NonZeroExit(output))
                     };
+                }
+                Some(codegen::shell_event::Event::TimedOutAfterMs(timeout_ms)) => {
+                    return Err(CommandError::TimedOut {
+                        timeout: Duration::from_millis(timeout_ms),
+                        output: CommandOutput::new(output),
+                    });
                 }
                 None => {
                     return Err(CommandError::ExecutorError(anyhow::anyhow!(
@@ -407,7 +409,10 @@ impl RunningDockerExecutor {
         path: &Path,
         timeout: Option<Duration>,
     ) -> Result<CommandOutput, CommandError> {
-        let cmd = format!("cat {}", path.display());
+        let path = path.to_string_lossy();
+        let mut cmd = String::with_capacity(path.len() + 8);
+        cmd.push_str("cat -- ");
+        push_shell_word(&mut cmd, &path);
         self.exec_shell(&cmd, workdir, timeout).await
     }
 
@@ -435,8 +440,11 @@ impl RunningDockerExecutor {
             .any(|&s| output.contains(s));
 
             if missing_path {
-                let path = path.parent().context("No parent directory")?;
-                let mkdircmd = format!("mkdir -p {}", path.display());
+                let parent = path.parent().context("No parent directory")?;
+                let parent = parent.to_string_lossy();
+                let mut mkdircmd = String::with_capacity(parent.len() + 12);
+                mkdircmd.push_str("mkdir -p -- ");
+                push_shell_word(&mut mkdircmd, &parent);
                 let _ = self.exec_shell(&mkdircmd, workdir, timeout).await?;
 
                 return self.exec_shell(&cmd, workdir, timeout).await;
@@ -494,18 +502,24 @@ impl RunningDockerExecutor {
 
 fn write_file_command(path: &Path, content: &str) -> String {
     let path = path.to_string_lossy();
-    let mut command = String::with_capacity(content.len() + path.len() + 16);
-    command.push_str("printf %s '");
-    for character in content.chars() {
+    let mut command = String::with_capacity(content.len() + path.len() + 20);
+    command.push_str("printf %s ");
+    push_shell_word(&mut command, content);
+    command.push_str(" > ");
+    push_shell_word(&mut command, &path);
+    command
+}
+
+fn push_shell_word(command: &mut String, value: &str) {
+    command.push('\'');
+    for character in value.chars() {
         if character == '\'' {
             command.push_str("'\\''");
         } else {
             command.push(character);
         }
     }
-    command.push_str("' > ");
-    command.push_str(&path);
-    command
+    command.push('\'');
 }
 
 fn duration_to_millis(duration: Duration) -> u64 {

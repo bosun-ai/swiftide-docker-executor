@@ -26,13 +26,7 @@ message ShellRequest {
 message ShellEvent {
   oneof event {
     bytes output = 1;
-    ShellResult result = 2;
-  }
-}
-
-message ShellResult {
-  oneof outcome {
-    int32 exit_code = 1;
-    uint64 timed_out_after_ms = 2;
+    int32 exit_code = 2;
+    uint64 timed_out_after_ms = 3;
   }
 }
