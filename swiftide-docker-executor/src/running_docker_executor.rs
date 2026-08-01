@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
     models::{ContainerState, ContainerStateStatusEnum},
-    query_parameters::{InspectContainerOptions, KillContainerOptions, RemoveContainerOptions},
+    query_parameters::{InspectContainerOptions, StopContainerOptions},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
 use futures_util::Stream;
@@ -454,46 +454,24 @@ impl RunningDockerExecutor {
         write_file_result
     }
 
-    /// Stops and removes the container associated with this executor.
+    /// Stops the container associated with this executor.
+    ///
+    /// Docker removes the container because it was created with automatic removal enabled.
     pub async fn shutdown(&self) -> Result<(), DockerExecutorError> {
         // Stop any jobs that might block the docker socket
         self.cancel_token.cancel();
 
         tracing::warn!(
-            "Dropped; stopping and removing container {container_id}",
+            "Dropped; stopping container {container_id}",
             container_id = self.container_id
         );
 
-        let docker = self.docker.clone();
-        let container_id = self.container_id.clone();
-
         tracing::debug!(
             "Stopping container {container_id}",
-            container_id = container_id
+            container_id = self.container_id
         );
-        docker
-            .kill_container(
-                &container_id,
-                Some(KillContainerOptions {
-                    signal: "SIGTERM".to_string(),
-                }),
-            )
-            .await?;
-
-        tracing::debug!(
-            "Removing container {container_id}",
-            container_id = container_id
-        );
-
-        docker
-            .remove_container(
-                &container_id,
-                Some(RemoveContainerOptions {
-                    force: true,
-                    v: true,
-                    ..Default::default()
-                }),
-            )
+        self.docker
+            .stop_container(&self.container_id, None::<StopContainerOptions>)
             .await?;
 
         Ok(())

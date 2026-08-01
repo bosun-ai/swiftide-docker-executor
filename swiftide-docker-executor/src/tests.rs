@@ -450,7 +450,7 @@ async fn test_assert_container_stopped_on_drop() {
         .unwrap();
     assert_eq!(result.to_string_lossy().trim(), "hello");
 
-    let _ = executor.shutdown().await;
+    executor.shutdown().await.unwrap();
 
     // assert it stopped
     let container = match docker
@@ -553,7 +553,7 @@ async fn test_assert_container_stopped_on_drop_entrypoint() {
         .unwrap();
     assert_eq!(result.to_string_lossy().trim(), "hello");
 
-    let _ = executor.shutdown().await;
+    executor.shutdown().await.unwrap();
 
     // assert it stopped
     let container = match docker
@@ -1206,7 +1206,7 @@ async fn test_logs_stream_returns_live_log_lines() {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // The log task won't complete unless we stop the executor
-    let _ = executor.shutdown().await;
+    executor.shutdown().await.unwrap();
 
     // Stream logs and collect a few lines
     let collected_logs = log_task.await.unwrap();
