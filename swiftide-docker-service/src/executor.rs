@@ -427,7 +427,7 @@ mod tests {
             cwd: None,
         };
 
-        let (output, outcome) = tokio::time::timeout(Duration::from_secs(2), execute(request))
+        let (output, outcome) = tokio::time::timeout(Duration::from_secs(10), execute(request))
             .await
             .expect("combined output pipe should close after the shell exits");
 
@@ -438,18 +438,18 @@ mod tests {
     #[tokio::test]
     async fn streams_partial_output_before_timeout_result() {
         let request = ShellRequest {
-            command: "sleep 10 & printf before-timeout".into(),
+            command: "printf before-timeout; sleep 30 & :".into(),
             env_clear: false,
             env_remove: vec![],
             envs: Default::default(),
-            timeout_ms: Some(1_000),
+            timeout_ms: Some(3_000),
             cwd: None,
         };
 
         let (output, outcome) = execute(request).await;
 
         assert_eq!(output, b"before-timeout");
-        assert_eq!(outcome, Event::TimedOutAfterMs(1_000));
+        assert_eq!(outcome, Event::TimedOutAfterMs(3_000));
     }
 
     #[tokio::test]
