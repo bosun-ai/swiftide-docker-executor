@@ -30,16 +30,23 @@ async fn test_runs_docker_and_echos() {
         .await
         .unwrap();
 
-    assert_eq!(output.stdout, "hello");
-    assert_eq!(output.stderr, "");
+    assert_eq!(output.to_string_lossy().trim(), "hello");
 
     let output = executor
         .exec_cmd(&Command::shell("printf stdout; printf stderr >&2"))
         .await
         .unwrap();
 
-    assert_eq!(output.stdout, "stdout");
-    assert_eq!(output.stderr, "stderr");
+    assert_eq!(output.to_string_lossy(), "stdoutstderr");
+
+    let output = executor
+        .exec_cmd(&Command::shell(
+            "printf 'first\\n'; sleep 0.05; printf 'second\\n' >&2; sleep 0.05; printf 'third\\n'",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(output.to_string_lossy(), "first\nsecond\nthird\n");
 
     let error = executor
         .exec_cmd(&Command::shell(
@@ -51,15 +58,14 @@ async fn test_runs_docker_and_echos() {
     let CommandError::NonZeroExit(output) = error else {
         panic!("expected non-zero exit");
     };
-    assert_eq!(output.stdout, "failed-out");
-    assert_eq!(output.stderr, "failed-err");
+    assert_eq!(output.to_string_lossy(), "failed-outfailed-err");
 
     let output = executor
         .exec_cmd(&Command::shell("which rg"))
         .await
         .unwrap();
 
-    assert_eq!(output.stdout, "/usr/bin/rg");
+    assert_eq!(output.to_string_lossy().trim(), "/usr/bin/rg");
 
     let output = executor
         .exec_cmd(&Command::shell("rg Cargo.toml"))
@@ -67,8 +73,8 @@ async fn test_runs_docker_and_echos() {
         .unwrap();
 
     assert!(
-        output.stdout.contains("src/tests.rs"),
-        "{output} does not contain expected path"
+        output.to_string_lossy().contains("src/tests.rs"),
+        "{output:?} does not contain expected path"
     );
 
     let output = executor
@@ -77,8 +83,8 @@ async fn test_runs_docker_and_echos() {
         .unwrap();
 
     assert!(
-        output.stdout.contains("Cargo.toml"),
-        "{output} does not contain expected path"
+        output.to_string_lossy().contains("Cargo.toml"),
+        "{output:?} does not contain expected path"
     );
 }
 
@@ -106,7 +112,7 @@ async fn test_shell_reads_etc_profile() {
         .await
         .unwrap();
 
-    assert_eq!(output.stdout, "from_profile");
+    assert_eq!(output.to_string_lossy().trim(), "from_profile");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -127,14 +133,14 @@ async fn test_runs_on_alpine() {
         .await
         .unwrap();
 
-    assert_eq!(output.stdout, "hello");
+    assert_eq!(output.to_string_lossy().trim(), "hello");
 
     let output = executor
         .exec_cmd(&Command::shell("which rg"))
         .await
         .unwrap();
 
-    assert_eq!(output.stdout, "/usr/bin/rg");
+    assert_eq!(output.to_string_lossy().trim(), "/usr/bin/rg");
 
     let output = executor
         .exec_cmd(&Command::shell("rg Cargo.toml"))
@@ -142,8 +148,8 @@ async fn test_runs_on_alpine() {
         .unwrap();
 
     assert!(
-        output.stdout.contains("src/tests.rs"),
-        "{output} does not contain expected path"
+        output.to_string_lossy().contains("src/tests.rs"),
+        "{output:?} does not contain expected path"
     );
 
     let output = executor
@@ -152,8 +158,8 @@ async fn test_runs_on_alpine() {
         .unwrap();
 
     assert!(
-        output.stdout.contains("Cargo.toml"),
-        "{output} does not contain expected path"
+        output.to_string_lossy().contains("Cargo.toml"),
+        "{output:?} does not contain expected path"
     );
 }
 
@@ -170,8 +176,9 @@ async fn test_context_present() {
     let ls = executor.exec_cmd(&Command::shell("ls -a")).await.unwrap();
 
     assert!(
-        ls.stdout.contains("Cargo.toml"),
-        "Context did not contain `Cargo.toml`, actual:\n {ls}"
+        ls.to_string_lossy().contains("Cargo.toml"),
+        "Context did not contain `Cargo.toml`, actual:\n {}",
+        ls.to_string_lossy()
     );
 }
 
@@ -187,7 +194,7 @@ async fn test_current_dir_resolution() {
         .unwrap();
 
     let default_pwd = executor.exec_cmd(&Command::shell("pwd")).await.unwrap();
-    assert_eq!(default_pwd.stdout, "/app");
+    assert_eq!(default_pwd.to_string_lossy().trim(), "/app");
 
     executor
         .exec_cmd(&Command::shell("mkdir -p project"))
@@ -198,13 +205,13 @@ async fn test_current_dir_resolution() {
         .exec_cmd(&Command::shell("pwd").with_current_dir("project"))
         .await
         .unwrap();
-    assert_eq!(relative_pwd.stdout, "/app/project");
+    assert_eq!(relative_pwd.to_string_lossy().trim(), "/app/project");
 
     let absolute_pwd = executor
         .exec_cmd(&Command::shell("pwd").with_current_dir("/tmp"))
         .await
         .unwrap();
-    assert_eq!(absolute_pwd.stdout, "/tmp");
+    assert_eq!(absolute_pwd.to_string_lossy().trim(), "/tmp");
 
     let write_cmd =
         Command::write_file(Path::new("nested/file.txt"), "hello").with_current_dir("project");
@@ -212,7 +219,7 @@ async fn test_current_dir_resolution() {
 
     let read_cmd = Command::read_file(Path::new("nested/file.txt")).with_current_dir("project");
     let read_output = executor.exec_cmd(&read_cmd).await.unwrap();
-    assert_eq!(read_output.stdout, "hello");
+    assert_eq!(read_output.to_string_lossy().trim(), "hello");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -228,14 +235,14 @@ async fn test_default_workdir_override() {
         .unwrap();
 
     let pwd = executor.exec_cmd(&Command::shell("pwd")).await.unwrap();
-    assert_eq!(pwd.stdout, "/tmp");
+    assert_eq!(pwd.to_string_lossy().trim(), "/tmp");
 
     let write_cmd = Command::write_file(Path::new("override.txt"), "contents");
     executor.exec_cmd(&write_cmd).await.unwrap();
 
     let read_cmd = Command::read_file(Path::new("override.txt"));
     let read_output = executor.exec_cmd(&read_cmd).await.unwrap();
-    assert_eq!(read_output.stdout, "contents");
+    assert_eq!(read_output.to_string_lossy().trim(), "contents");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -317,11 +324,11 @@ async fn test_overrides_include_git_respects_ignore() {
 
     let ls = executor.exec_cmd(&Command::shell("ls -aRl")).await.unwrap();
 
-    eprintln!("Executor LS:\n {ls}");
-    assert!(ls.stdout.contains(".git"));
-    assert!(!ls.stdout.contains("README.md"));
-    assert!(!ls.stdout.contains("target"));
-    assert!(!ls.stdout.contains("ignored_file"));
+    eprintln!("Executor LS:\n {}", ls.to_string_lossy());
+    assert!(ls.to_string_lossy().contains(".git"));
+    assert!(!ls.to_string_lossy().contains("README.md"));
+    assert!(!ls.to_string_lossy().contains("target"));
+    assert!(!ls.to_string_lossy().contains("ignored_file"));
 
     // read .git/HEAD to check if git works
     let git_head = executor
@@ -329,7 +336,7 @@ async fn test_overrides_include_git_respects_ignore() {
         .await
         .unwrap();
 
-    assert!(git_head.stdout.contains("ref: refs/heads/"));
+    assert!(git_head.to_string_lossy().contains("ref: refs/heads/"));
 
     // test git works
     let git_status = executor
@@ -337,16 +344,20 @@ async fn test_overrides_include_git_respects_ignore() {
         .await
         .unwrap();
 
-    eprintln!("{git_status}");
+    eprintln!("{}", git_status.to_string_lossy());
 
     // It's ignored so git will think it's deleted
-    assert!(git_status.stdout.contains("deleted:    ignored_file"));
+    assert!(
+        git_status
+            .to_string_lossy()
+            .contains("deleted:    ignored_file")
+    );
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_write_and_read_file_with_quotes() {
-    let content = r#"This is a "test" content with 'quotes' and special characters: \n \t"#;
-    let path = Path::new("test_file.txt");
+    let content = "This is a \"test\" with 'quotes' and trailing whitespace.\n\n";
+    let path = Path::new("directory with spaces/file's name.txt");
 
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE)
@@ -367,7 +378,7 @@ async fn test_write_and_read_file_with_quotes() {
     //
     let read_file = executor.exec_cmd(&Command::read_file(path)).await.unwrap();
 
-    assert_eq!(content, read_file.stdout);
+    assert_eq!(content, read_file.to_string_lossy());
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -405,7 +416,7 @@ async fn test_write_and_read_file_markdown() {
     //
     let read_file = executor.exec_cmd(&Command::read_file(path)).await.unwrap();
 
-    assert_eq!(content, read_file.stdout);
+    assert_eq!(content, read_file.to_string_lossy());
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -437,9 +448,9 @@ async fn test_assert_container_stopped_on_drop() {
         .exec_cmd(&Command::shell("echo 'hello'"))
         .await
         .unwrap();
-    assert_eq!(result.stdout, "hello");
+    assert_eq!(result.to_string_lossy().trim(), "hello");
 
-    let _ = executor.shutdown().await;
+    executor.shutdown().await.unwrap();
 
     // assert it stopped
     let container = match docker
@@ -492,7 +503,7 @@ async fn test_assert_container_retain_on_drop() {
         .exec_cmd(&Command::shell("echo 'hello'"))
         .await
         .unwrap();
-    assert_eq!(result.stdout, "hello");
+    assert_eq!(result.to_string_lossy().trim(), "hello");
     let container_id = executor.container_id.clone();
 
     drop(executor);
@@ -540,9 +551,9 @@ async fn test_assert_container_stopped_on_drop_entrypoint() {
         .exec_cmd(&Command::shell("echo 'hello'"))
         .await
         .unwrap();
-    assert_eq!(result.stdout, "hello");
+    assert_eq!(result.to_string_lossy().trim(), "hello");
 
-    let _ = executor.shutdown().await;
+    executor.shutdown().await.unwrap();
 
     // assert it stopped
     let container = match docker
@@ -601,7 +612,7 @@ async fn test_create_file_subdirectory_that_does_not_exist() {
     let read_file = executor.exec_cmd(&Command::read_file(path)).await.unwrap();
 
     // Assert that the written content matches the read content
-    assert_eq!(content, read_file.stdout);
+    assert_eq!(content, read_file.to_string_lossy());
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -627,7 +638,7 @@ async fn test_custom_dockerfile() {
         .exec_cmd(&Command::shell("echo hello"))
         .await
         .unwrap();
-    assert_eq!(output.stdout, "hello");
+    assert_eq!(output.to_string_lossy().trim(), "hello");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -658,7 +669,7 @@ async fn test_nullifies_cmd() {
         .await
         .unwrap();
     dbg!(executor.logs().await.unwrap());
-    assert_eq!(output.stdout, "hello");
+    assert_eq!(output.to_string_lossy().trim(), "hello");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -688,7 +699,7 @@ async fn test_nullifies_entrypoint() {
         .exec_cmd(&Command::shell("echo hello"))
         .await
         .unwrap();
-    assert_eq!(output.stdout, "hello");
+    assert_eq!(output.to_string_lossy().trim(), "hello");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -737,7 +748,7 @@ async fn test_invalid_dockerfile() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn test_docker_logs_in_stdout() {
+async fn test_docker_logs_output_capture_without_content() {
     let executor = DockerExecutor::default()
         .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
@@ -752,9 +763,9 @@ async fn test_docker_logs_in_stdout() {
         .await
         .unwrap();
 
-    assert_eq!(output.stdout, "hello");
+    assert_eq!(output.to_string_lossy().trim(), "hello");
 
-    let expected = "stdout: hello";
+    let expected = "Captured command output";
     let logs = wait_for_log_line(&executor, expected).await;
     assert!(
         logs.iter().any(|l| l.contains(expected)),
@@ -818,7 +829,7 @@ async fn test_existing_image_no_context() {
     assert!(executor.is_running().await);
 
     let output = executor.exec_cmd(&Command::shell("ls")).await;
-    // assert_eq!(output.stdout, "hello");
+    // assert_eq!(output.to_string_lossy().trim(), "hello");
     println!("--- container logs ---");
     for log in executor.logs().await.unwrap() {
         println!("{log}");
@@ -875,7 +886,7 @@ async fn test_run_multiline_bash_script() {
 
     let output = executor.exec_cmd(&Command::shell(script)).await.unwrap();
 
-    let result = output.stdout;
+    let result = output.to_string_lossy();
     assert!(result.contains("line1"));
     assert!(result.contains("line2"));
     assert!(result.contains("line3"));
@@ -901,7 +912,7 @@ print(1 + 2)"#;
     dbg!(executor.logs().await.unwrap());
     let output = output.unwrap();
 
-    let result = output.stdout;
+    let result = output.to_string_lossy();
     assert!(result.contains("hello from python"));
     assert!(result.contains("3"));
 }
@@ -921,7 +932,7 @@ async fn test_clear_env() {
     let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // TEST_VAR is set via Dockerfile.tests; with clear_env it should be absent
-    let env_output = output.stdout;
+    let env_output = output.to_string_lossy();
     dbg!(&env_output);
     assert!(
         !env_output.contains("TEST_VAR=test"),
@@ -944,7 +955,7 @@ async fn test_no_clear_env() {
     let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // TEST_VAR is set via Dockerfile.tests; without clear_env it should be present
-    let env_output = output.stdout;
+    let env_output = output.to_string_lossy();
     dbg!(&env_output);
     assert!(
         env_output.contains("TEST_VAR=test"),
@@ -967,7 +978,7 @@ async fn test_remove_env() {
     let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // Check that common host env vars are not present
-    let env_output = output.stdout;
+    let env_output = output.to_string_lossy();
     dbg!(&env_output);
     dbg!(&executor.logs().await.unwrap());
     assert!(!env_output.contains("HOSTNAME="), "HOST env propagated");
@@ -991,7 +1002,7 @@ async fn test_add_env() {
     let output = executor.exec_cmd(&Command::shell("env")).await.unwrap();
 
     // Check that common host env vars are not present
-    let env_output = output.stdout;
+    let env_output = output.to_string_lossy();
     dbg!(&env_output);
     assert!(
         env_output.contains("TEST_ENV=test_value"),
@@ -1018,12 +1029,15 @@ async fn test_default_timeout_triggers() {
 
     assert_eq!(executor.default_timeout, Some(Duration::from_secs(1)));
 
-    let result = executor.exec_cmd(&Command::shell("sleep 5")).await;
+    let result = executor
+        .exec_cmd(&Command::shell("printf before-timeout; sleep 5"))
+        .await;
     let err = result.expect_err("command should time out");
 
     match err {
-        CommandError::TimedOut { timeout, .. } => {
+        CommandError::TimedOut { timeout, output } => {
             assert_eq!(timeout, Duration::from_secs(1));
+            assert_eq!(output.to_string_lossy(), "before-timeout");
         }
         other => panic!("unexpected error: {other:#}"),
     }
@@ -1067,16 +1081,27 @@ async fn test_timeout_kills_child_processes_and_executor_recovers() {
         .await
         .expect("executor should accept another command after timeout")
         .unwrap();
-    assert_eq!(output.to_string(), "healthy");
+    assert_eq!(output.to_string_lossy().trim(), "healthy");
 
     let read_pid = Command::read_file(Path::new("/tmp/swiftide-timeout-child-pid"));
-    let child_pid = executor.exec_cmd(&read_pid).await.unwrap().to_string();
+    let child_pid = executor
+        .exec_cmd(&read_pid)
+        .await
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     let child_pid = child_pid.trim();
 
     let inspect = Command::shell(format!(
         r#"if [ -r /proc/{child_pid}/stat ]; then awk '{{ print $3 }}' /proc/{child_pid}/stat; else echo gone; fi"#
     ));
-    let child_state = executor.exec_cmd(&inspect).await.unwrap().to_string();
+    let child_state = executor
+        .exec_cmd(&inspect)
+        .await
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let child_state = child_state.trim();
     assert!(
         child_state == "gone" || child_state == "Z",
         "timed-out child process should be gone or reaped as a zombie, got state {child_state:?}"
@@ -1109,7 +1134,7 @@ async fn test_timed_out_command_does_not_kill_concurrent_command() {
     }
 
     let output = survivor_result.expect("concurrent command should survive timeout cleanup");
-    assert_eq!(output.to_string(), "survivor");
+    assert_eq!(output.to_string_lossy().trim(), "survivor");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -1131,7 +1156,7 @@ async fn test_per_command_timeout_overrides_default() {
         .await
         .unwrap();
 
-    assert!(result.is_empty(), "Expected no output, got: {result}");
+    assert!(result.is_empty(), "Expected no output, got: {result:?}");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -1181,7 +1206,7 @@ async fn test_logs_stream_returns_live_log_lines() {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // The log task won't complete unless we stop the executor
-    let _ = executor.shutdown().await;
+    executor.shutdown().await.unwrap();
 
     // Stream logs and collect a few lines
     let collected_logs = log_task.await.unwrap();
@@ -1237,8 +1262,11 @@ async fn test_background_shell_command_returns_immediately() {
 
     // Optionally, assert output for a friendly message
     assert!(
-        output.stdout.contains("Background command started") || output.stdout.trim().is_empty(),
-        "Unexpected output from background command: {}",
+        output
+            .to_string_lossy()
+            .contains("Background command started")
+            || output.to_string_lossy().trim().is_empty(),
+        "Unexpected output from background command: {:?}",
         output
     );
 
@@ -1247,5 +1275,15 @@ async fn test_background_shell_command_returns_immediately() {
         .exec_cmd(&Command::shell("echo done"))
         .await
         .unwrap();
-    assert_eq!(echo.stdout, "done");
+    assert_eq!(echo.to_string_lossy().trim(), "done");
+
+    let output = executor
+        .exec_cmd(
+            &Command::shell("sleep 30 >/dev/null 2>&1 & echo ready")
+                .with_timeout(Duration::from_secs(3)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output.to_string_lossy(), "ready\n");
 }

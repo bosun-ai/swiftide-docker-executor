@@ -24,7 +24,6 @@ tokio-tar = { version = "0.6", package = "astral-tokio-tar" }
 tokio-util = "0.7.16"
 uuid = { version = "1.12", features = ["v4"] }
 tracing.workspace = true
-indoc = "2.0"
 anyhow = "1.0"
 dirs = "6.0"
 tempfile = "3.19"

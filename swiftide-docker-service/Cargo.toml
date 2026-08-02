@@ -16,12 +16,14 @@ categories.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tonic.workspace = true
 prost.workspace = true
+bytes.workspace = true
 tonic-prost.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3" }
 futures-util.workspace = true
+async-stream.workspace = true
 tempfile = "3"
-libc = "0.2"
+process-wrap = { version = "9", default-features = false, features = ["process-group", "tokio1"] }
 
 swiftide-indexing = { workspace = true, optional = true }
 swiftide-core = { workspace = true, optional = true }
@@ -35,3 +37,4 @@ file-loader = ["dep:swiftide-indexing", "dep:swiftide-core"]
 
 [dev-dependencies]
 indoc = "2"
+libc = "0.2"

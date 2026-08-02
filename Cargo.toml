@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.dependencies]
 tonic = { version = "0.14" }
 prost = "0.14"
-tonic-build = "0.14"
+bytes = "1"
 tonic-prost-build = "0.14"
 tonic-prost = "0.14"
 tracing = "0.1"
@@ -13,6 +13,7 @@ tokio = { version = "1", features = ["full"] }
 swiftide-core = "0.32"
 swiftide-indexing = "0.32"
 futures-util = "0.3"
+async-stream = "0.3"
 
 [workspace.package]
 description = "A docker executor for swiftide agent tools"

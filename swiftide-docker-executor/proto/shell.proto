@@ -4,8 +4,8 @@ package shell;
 
 // The gRPC service definition.
 service ShellExecutor {
-  // Runs a shell command and returns exit code, stdout, and stderr.
-  rpc ExecShell (ShellRequest) returns (ShellResponse) {}
+  // Runs a shell command and streams its raw combined output.
+  rpc ExecShell (ShellRequest) returns (stream ShellEvent) {}
 }
 
 // The request message containing the command to run.
@@ -23,9 +23,10 @@ message ShellRequest {
   optional string cwd = 7;
 }
 
-// The response message containing exit code, stdout, and stderr.
-message ShellResponse {
-  int32 exit_code = 1;
-  string stdout = 2;
-  string stderr = 3;
+message ShellEvent {
+  oneof event {
+    bytes output = 1;
+    int32 exit_code = 2;
+    uint64 timed_out_after_ms = 3;
+  }
 }

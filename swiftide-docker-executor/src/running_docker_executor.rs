@@ -2,11 +2,12 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use bollard::{
     models::{ContainerState, ContainerStateStatusEnum},
-    query_parameters::{InspectContainerOptions, KillContainerOptions, RemoveContainerOptions},
+    query_parameters::{InspectContainerOptions, StopContainerOptions},
 };
 use codegen::shell_executor_client::ShellExecutorClient;
 use futures_util::Stream;
 use std::{
+    borrow::Cow,
     collections::HashMap,
     net::IpAddr,
     path::{Path, PathBuf},
@@ -63,10 +64,15 @@ impl ToolExecutor for RunningDockerExecutor {
         let timeout = self.resolve_timeout(cmd);
 
         match cmd {
-            Command::Shell { command, .. } => self.exec_shell(command, &workdir, timeout).await,
-            Command::ReadFile { path, .. } => self.exec_read_file(&workdir, path, timeout).await,
+            Command::Shell { command, .. } => {
+                self.exec_shell(command, workdir.as_ref(), timeout).await
+            }
+            Command::ReadFile { path, .. } => {
+                self.exec_read_file(workdir.as_ref(), path, timeout).await
+            }
             Command::WriteFile { path, content, .. } => {
-                self.exec_write_file(&workdir, path, content, timeout).await
+                self.exec_write_file(workdir.as_ref(), path, content, timeout)
+                    .await
             }
             _ => unimplemented!(),
         }
@@ -321,11 +327,11 @@ impl RunningDockerExecutor {
         ReceiverStream::new(rx)
     }
 
-    fn resolve_workdir(&self, cmd: &Command) -> PathBuf {
+    fn resolve_workdir<'a>(&'a self, cmd: &'a Command) -> Cow<'a, Path> {
         match cmd.current_dir_path() {
-            Some(path) if path.is_absolute() => path.to_path_buf(),
-            Some(path) => self.workdir.join(path),
-            None => self.workdir.clone(),
+            Some(path) if path.is_absolute() => Cow::Borrowed(path),
+            Some(path) => Cow::Owned(self.workdir.join(path)),
+            None => Cow::Borrowed(&self.workdir),
         }
     }
 
@@ -357,47 +363,43 @@ impl RunningDockerExecutor {
             timeout_ms,
             cwd: Some(workdir.display().to_string()),
         });
+        let mut events = client
+            .exec_shell(request)
+            .await
+            .map_err(anyhow::Error::from)?
+            .into_inner();
 
-        let response = match client.exec_shell(request).await {
-            Ok(resp) => resp.into_inner(),
-            Err(status) => {
-                if status.code() == tonic::Code::DeadlineExceeded {
-                    if let Some(limit) = timeout {
-                        let message = status.message().to_string();
-                        let output = if message.is_empty() {
-                            CommandOutput::empty()
-                        } else {
-                            CommandOutput::new(message)
-                        };
-
-                        return Err(CommandError::TimedOut {
-                            timeout: limit,
-                            output,
-                        });
-                    }
-
-                    return Err(CommandError::ExecutorError(status.into()));
+        let mut output = Vec::new();
+        while let Some(event) = events.message().await.map_err(anyhow::Error::from)? {
+            match event.event {
+                Some(codegen::shell_event::Event::Output(bytes)) => {
+                    output.extend_from_slice(&bytes);
                 }
-
-                return Err(CommandError::ExecutorError(status.into()));
+                Some(codegen::shell_event::Event::ExitCode(exit_code)) => {
+                    let output = CommandOutput::new(output);
+                    return if exit_code == 0 {
+                        Ok(output)
+                    } else {
+                        Err(CommandError::NonZeroExit(output))
+                    };
+                }
+                Some(codegen::shell_event::Event::TimedOutAfterMs(timeout_ms)) => {
+                    return Err(CommandError::TimedOut {
+                        timeout: Duration::from_millis(timeout_ms),
+                        output: CommandOutput::new(output),
+                    });
+                }
+                None => {
+                    return Err(CommandError::ExecutorError(anyhow::anyhow!(
+                        "Shell service returned an event without a payload"
+                    )));
+                }
             }
-        };
-
-        let codegen::ShellResponse {
-            stdout,
-            stderr,
-            exit_code,
-        } = response;
-
-        let stdout = stdout.trim().to_string();
-        let stderr = stderr.trim().to_string();
-        let output = CommandOutput::from_parts(stdout, stderr);
-
-        if exit_code == 0 {
-            Ok(output)
-        } else {
-            Err(CommandError::NonZeroExit(output))
         }
+
+        Err(CommandError::ExecutorError(anyhow::anyhow!(
+            "Shell output stream ended without an execution result"
+        )))
     }
 
     #[tracing::instrument(skip(self))]
@@ -407,7 +409,10 @@ impl RunningDockerExecutor {
         path: &Path,
         timeout: Option<Duration>,
     ) -> Result<CommandOutput, CommandError> {
-        let cmd = format!("cat {}", path.display());
+        let path = path.to_string_lossy();
+        let mut cmd = String::with_capacity(path.len() + 8);
+        cmd.push_str("cat -- ");
+        push_shell_word(&mut cmd, &path);
         self.exec_shell(&cmd, workdir, timeout).await
     }
 
@@ -419,21 +424,13 @@ impl RunningDockerExecutor {
         content: &str,
         timeout: Option<Duration>,
     ) -> Result<CommandOutput, CommandError> {
-        let cmd = indoc::formatdoc! {
-            r#"
-            cat << 'EOFKWAAK' > {path}
-            {content}
-            EOFKWAAK"#,
-            path = path.display(),
-            content = content.trim_end()
-
-        };
+        let cmd = write_file_command(path, content);
 
         let write_file_result = self.exec_shell(&cmd, workdir, timeout).await;
 
         // If the directory or file does not exist, create it
         if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result {
-            let output = format!("{}\n{}", write_file.stdout, write_file.stderr).to_lowercase();
+            let output = write_file.to_string_lossy().to_lowercase();
             let missing_path = [
                 "no such file or directory",
                 "directory nonexistent",
@@ -443,8 +440,11 @@ impl RunningDockerExecutor {
             .any(|&s| output.contains(s));
 
             if missing_path {
-                let path = path.parent().context("No parent directory")?;
-                let mkdircmd = format!("mkdir -p {}", path.display());
+                let parent = path.parent().context("No parent directory")?;
+                let parent = parent.to_string_lossy();
+                let mut mkdircmd = String::with_capacity(parent.len() + 12);
+                mkdircmd.push_str("mkdir -p -- ");
+                push_shell_word(&mut mkdircmd, &parent);
                 let _ = self.exec_shell(&mkdircmd, workdir, timeout).await?;
 
                 return self.exec_shell(&cmd, workdir, timeout).await;
@@ -454,50 +454,50 @@ impl RunningDockerExecutor {
         write_file_result
     }
 
-    /// Stops and removes the container associated with this executor.
+    /// Stops the container associated with this executor.
+    ///
+    /// Docker removes the container because it was created with automatic removal enabled.
     pub async fn shutdown(&self) -> Result<(), DockerExecutorError> {
         // Stop any jobs that might block the docker socket
         self.cancel_token.cancel();
 
         tracing::warn!(
-            "Dropped; stopping and removing container {container_id}",
+            "Dropped; stopping container {container_id}",
             container_id = self.container_id
         );
 
-        let docker = self.docker.clone();
-        let container_id = self.container_id.clone();
-
         tracing::debug!(
             "Stopping container {container_id}",
-            container_id = container_id
+            container_id = self.container_id
         );
-        docker
-            .kill_container(
-                &container_id,
-                Some(KillContainerOptions {
-                    signal: "SIGTERM".to_string(),
-                }),
-            )
-            .await?;
-
-        tracing::debug!(
-            "Removing container {container_id}",
-            container_id = container_id
-        );
-
-        docker
-            .remove_container(
-                &container_id,
-                Some(RemoveContainerOptions {
-                    force: true,
-                    v: true,
-                    ..Default::default()
-                }),
-            )
+        self.docker
+            .stop_container(&self.container_id, None::<StopContainerOptions>)
             .await?;
 
         Ok(())
     }
+}
+
+fn write_file_command(path: &Path, content: &str) -> String {
+    let path = path.to_string_lossy();
+    let mut command = String::with_capacity(content.len() + path.len() + 20);
+    command.push_str("printf %s ");
+    push_shell_word(&mut command, content);
+    command.push_str(" > ");
+    push_shell_word(&mut command, &path);
+    command
+}
+
+fn push_shell_word(command: &mut String, value: &str) {
+    command.push('\'');
+    for character in value.chars() {
+        if character == '\'' {
+            command.push_str("'\\''");
+        } else {
+            command.push(character);
+        }
+    }
+    command.push('\'');
 }
 
 fn duration_to_millis(duration: Duration) -> u64 {
