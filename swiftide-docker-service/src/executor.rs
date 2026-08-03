@@ -3,13 +3,11 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::pin::Pin;
 use std::process::Stdio;
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt as _, stream};
 use process_wrap::tokio::{CommandWrap, ProcessGroup};
-use tokio::net::unix::pipe;
 use tokio::process::Command;
 use tokio::time;
 use tokio_util::io::ReaderStream;
@@ -88,28 +86,22 @@ fn shell_events(
             env_remove,
             envs,
         )?;
-        let (stdout_sender, stdout) =
-            pipe::pipe().map_err(|err| Status::internal(format!("Failed to create stdout pipe: {err}")))?;
-        let (stderr_sender, stderr) =
-            pipe::pipe().map_err(|err| Status::internal(format!("Failed to create stderr pipe: {err}")))?;
-        let stdout_sender = stdout_sender
-            .into_blocking_fd()
-            .map_err(|err| Status::internal(format!("Failed to configure stdout pipe: {err}")))?;
-        let stderr_sender = stderr_sender
-            .into_blocking_fd()
-            .map_err(|err| Status::internal(format!("Failed to configure stderr pipe: {err}")))?;
-        command_process.stdout(stdout_sender).stderr(stderr_sender);
+        command_process.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut command_process = CommandWrap::from(command_process);
         command_process.wrap(ProcessGroup::leader());
-        let child = command_process.spawn().map_err(|err| {
+        let mut child = command_process.spawn().map_err(|err| {
             tracing::error!(?err, "Failed to start command");
             Status::internal(format!("Failed to start command: {err}"))
         })?;
         drop(command_process);
+        let stdout = child.stdout().take().expect("stdout is configured as piped");
+        let stderr = child.stderr().take().expect("stderr is configured as piped");
         let mut process = CommandGuard::new(child);
-        let stdout = CommandOutputStream::Stdout(ReaderStream::with_capacity(stdout, READ_BUFFER_SIZE));
-        let stderr = CommandOutputStream::Stderr(ReaderStream::with_capacity(stderr, READ_BUFFER_SIZE));
+        let stdout = ReaderStream::with_capacity(stdout, READ_BUFFER_SIZE)
+            .map(|chunk| chunk.map(Event::Stdout));
+        let stderr = ReaderStream::with_capacity(stderr, READ_BUFFER_SIZE)
+            .map(|chunk| chunk.map(Event::Stderr));
         let mut output = stream::select(stdout, stderr);
         let mut output_closed = false;
         let mut exit_status: Option<std::process::ExitStatus> = None;
@@ -152,8 +144,8 @@ fn shell_events(
 
             match event? {
                 ProcessEvent::OutputClosed => output_closed = true,
-                ProcessEvent::Output(chunk) => {
-                    yield shell_event(chunk.into_event());
+                ProcessEvent::Output(event) => {
+                    yield shell_event(event);
                 }
                 ProcessEvent::Exit(status) => {
                     exit_status = Some(status);
@@ -166,24 +158,20 @@ fn shell_events(
                     let drain_deadline = time::sleep(OUTPUT_DRAIN_TIMEOUT);
                     tokio::pin!(drain_deadline);
                     while !output_closed {
-                        let event: Result<ProcessEvent, Status> = tokio::select! {
+                        let event: Result<Option<Event>, Status> = tokio::select! {
                             chunk = output.next() => {
-                                match chunk {
-                                    Some(Ok(chunk)) => Ok(ProcessEvent::Output(chunk)),
-                                    Some(Err(err)) => Err(Status::internal(format!("Failed to read command output: {err}"))),
-                                    None => Ok(ProcessEvent::OutputClosed),
-                                }
+                                chunk.transpose().map_err(|err| {
+                                    Status::internal(format!("Failed to read command output: {err}"))
+                                })
                             }
-                            () = &mut drain_deadline => Ok(ProcessEvent::Timeout)
-                        };
-                        match event? {
-                            ProcessEvent::Output(chunk) => yield shell_event(chunk.into_event()),
-                            ProcessEvent::OutputClosed => output_closed = true,
-                            ProcessEvent::Timeout => {
+                            () = &mut drain_deadline => {
                                 tracing::warn!("Timed out draining command output");
                                 break;
                             }
-                            ProcessEvent::Exit(_) => unreachable!("draining does not wait for exit"),
+                        };
+                        match event? {
+                            Some(event) => yield shell_event(event),
+                            None => output_closed = true,
                         }
                     }
 
@@ -196,53 +184,10 @@ fn shell_events(
 }
 
 enum ProcessEvent {
-    Output(CommandOutputChunk<Bytes>),
+    Output(Event),
     OutputClosed,
     Exit(std::process::ExitStatus),
     Timeout,
-}
-
-enum CommandOutputChunk<T> {
-    Stdout(T),
-    Stderr(T),
-}
-
-impl CommandOutputChunk<Bytes> {
-    fn into_event(self) -> Event {
-        match self {
-            Self::Stdout(bytes) => Event::Stdout(bytes),
-            Self::Stderr(bytes) => Event::Stderr(bytes),
-        }
-    }
-}
-
-enum CommandOutputStream<S> {
-    Stdout(S),
-    Stderr(S),
-}
-
-impl<S, T, E> Stream for CommandOutputStream<S>
-where
-    S: Stream<Item = Result<T, E>> + Unpin,
-{
-    type Item = Result<CommandOutputChunk<T>, E>;
-
-    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let (stream, map) = match &mut *self {
-            Self::Stdout(stream) => (
-                stream,
-                CommandOutputChunk::Stdout as fn(T) -> CommandOutputChunk<T>,
-            ),
-            Self::Stderr(stream) => (
-                stream,
-                CommandOutputChunk::Stderr as fn(T) -> CommandOutputChunk<T>,
-            ),
-        };
-
-        Pin::new(stream)
-            .poll_next(context)
-            .map(|item| item.map(|result| result.map(map)))
-    }
 }
 
 fn spawn_background_command(
@@ -471,7 +416,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn streams_each_output_pipe_in_order() {
+    async fn streams_output_in_observed_order() {
         let request = ShellRequest {
             command:
                 "printf 'first\\n'; sleep 0.05; printf 'second\\n' >&2; sleep 0.05; printf 'third\\n'"
@@ -483,14 +428,30 @@ mod tests {
             cwd: None,
         };
 
-        let (stdout, stderr, outcome) =
-            tokio::time::timeout(Duration::from_secs(10), execute(request))
-                .await
-                .expect("output pipes should close after the shell exits");
+        let mut stream = MyShellExecutor
+            .exec_shell(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        let events = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut events = Vec::new();
+            while let Some(event) = stream.next().await {
+                events.push(event.unwrap().event.unwrap());
+            }
+            events
+        })
+        .await
+        .expect("output pipes should close after the shell exits");
 
-        assert_eq!(stdout, b"first\nthird\n");
-        assert_eq!(stderr, b"second\n");
-        assert_eq!(outcome, Event::ExitCode(0));
+        assert_eq!(
+            events,
+            [
+                Event::Stdout(Bytes::from_static(b"first\n")),
+                Event::Stderr(Bytes::from_static(b"second\n")),
+                Event::Stdout(Bytes::from_static(b"third\n")),
+                Event::ExitCode(0),
+            ]
+        );
     }
 
     #[tokio::test]
