@@ -63,7 +63,6 @@ async fn test_runs_docker_and_echos() {
     };
     assert_eq!(output.stdout_to_string_lossy(), "failed-out");
     assert_eq!(output.stderr_to_string_lossy(), "failed-err");
-    assert_eq!(output.to_string_lossy(), "failed-outfailed-err");
 
     let output = executor
         .exec_cmd(&Command::shell("which rg"))

@@ -98,10 +98,18 @@ fn shell_events(
         let stdout = child.stdout().take().expect("stdout is configured as piped");
         let stderr = child.stderr().take().expect("stderr is configured as piped");
         let mut process = CommandGuard::new(child);
-        let stdout = ReaderStream::with_capacity(stdout, READ_BUFFER_SIZE)
-            .map(|chunk| chunk.map(Event::Stdout));
-        let stderr = ReaderStream::with_capacity(stderr, READ_BUFFER_SIZE)
-            .map(|chunk| chunk.map(Event::Stderr));
+        let stdout = ReaderStream::with_capacity(stdout, READ_BUFFER_SIZE).map(|chunk| {
+            chunk.map(|bytes| {
+                tracing::info!(stream = "stdout", bytes = bytes.len(), "Captured command output");
+                Event::Stdout(bytes)
+            })
+        });
+        let stderr = ReaderStream::with_capacity(stderr, READ_BUFFER_SIZE).map(|chunk| {
+            chunk.map(|bytes| {
+                tracing::info!(stream = "stderr", bytes = bytes.len(), "Captured command output");
+                Event::Stderr(bytes)
+            })
+        });
         let mut output = stream::select(stdout, stderr);
         let mut output_closed = false;
         let mut exit_status: Option<std::process::ExitStatus> = None;

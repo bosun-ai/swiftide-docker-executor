@@ -435,7 +435,7 @@ impl RunningDockerExecutor {
 
         // If the directory or file does not exist, create it
         if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result {
-            let output = write_file.stdout_to_string_lossy().to_lowercase();
+            let output = write_file.to_string_lossy().to_lowercase();
             let missing_path = [
                 "no such file or directory",
                 "directory nonexistent",
