@@ -2510,6 +2510,7 @@ dependencies = [
  "swiftide-indexing",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",

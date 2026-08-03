@@ -369,14 +369,18 @@ impl RunningDockerExecutor {
             .map_err(anyhow::Error::from)?
             .into_inner();
 
-        let mut output = Vec::new();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
         while let Some(event) = events.message().await.map_err(anyhow::Error::from)? {
             match event.event {
-                Some(codegen::shell_event::Event::Output(bytes)) => {
-                    output.extend_from_slice(&bytes);
+                Some(codegen::shell_event::Event::Stdout(bytes)) => {
+                    stdout.extend_from_slice(&bytes);
+                }
+                Some(codegen::shell_event::Event::Stderr(bytes)) => {
+                    stderr.extend_from_slice(&bytes);
                 }
                 Some(codegen::shell_event::Event::ExitCode(exit_code)) => {
-                    let output = CommandOutput::new(output);
+                    let output = CommandOutput::from_parts(stdout, stderr);
                     return if exit_code == 0 {
                         Ok(output)
                     } else {
@@ -386,7 +390,7 @@ impl RunningDockerExecutor {
                 Some(codegen::shell_event::Event::TimedOutAfterMs(timeout_ms)) => {
                     return Err(CommandError::TimedOut {
                         timeout: Duration::from_millis(timeout_ms),
-                        output: CommandOutput::new(output),
+                        output: CommandOutput::from_parts(stdout, stderr),
                     });
                 }
                 None => {
@@ -430,7 +434,7 @@ impl RunningDockerExecutor {
 
         // If the directory or file does not exist, create it
         if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result {
-            let output = write_file.to_string_lossy().to_lowercase();
+            let output = write_file.stdout_to_string_lossy().to_lowercase();
             let missing_path = [
                 "no such file or directory",
                 "directory nonexistent",
