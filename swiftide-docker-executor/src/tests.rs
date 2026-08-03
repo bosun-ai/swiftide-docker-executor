@@ -18,6 +18,7 @@ async fn test_runs_docker_and_echos() {
         .with_dockerfile(TEST_DOCKERFILE)
         .with_context_path(".")
         .with_image_name("tests")
+        .with_output_read_size(3)
         .to_owned()
         .start()
         .await
@@ -39,6 +40,12 @@ async fn test_runs_docker_and_echos() {
 
     assert_eq!(output.stdout_to_string_lossy(), "stdout");
     assert_eq!(output.stderr_to_string_lossy(), "stderr");
+    assert!(
+        output
+            .chunks()
+            .iter()
+            .all(|chunk| chunk.as_bytes().len() <= 3)
+    );
 
     let output = executor
         .exec_cmd(&Command::shell(
@@ -90,6 +97,20 @@ async fn test_runs_docker_and_echos() {
         output.stdout_to_string_lossy().contains("Cargo.toml"),
         "{output:?} does not contain expected path"
     );
+}
+
+#[tokio::test]
+async fn rejects_zero_output_read_size_before_starting_docker() {
+    let result = DockerExecutor::default()
+        .with_output_read_size(0)
+        .to_owned()
+        .start()
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(DockerExecutorError::InvalidOutputReadSize)
+    ));
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]

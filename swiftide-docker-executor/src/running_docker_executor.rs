@@ -47,6 +47,7 @@ pub struct RunningDockerExecutor {
     pub(crate) env: HashMap<String, String>,
     pub(crate) default_timeout: Option<Duration>,
     pub(crate) workdir: PathBuf,
+    pub(crate) output_read_size: u64,
 
     /// Cancellation token to stop anything polling the docker api
     cancel_token: Arc<CancellationToken>,
@@ -95,6 +96,11 @@ impl RunningDockerExecutor {
     pub async fn start(
         builder: &DockerExecutor,
     ) -> Result<RunningDockerExecutor, DockerExecutorError> {
+        if builder.output_read_size == 0 {
+            return Err(DockerExecutorError::InvalidOutputReadSize);
+        }
+        let output_read_size = u64::try_from(builder.output_read_size)
+            .map_err(|_| DockerExecutorError::InvalidOutputReadSize)?;
         let docker = Client::lazy_client().await?;
 
         // Any temporary dockrerfile created during the build process
@@ -181,6 +187,7 @@ impl RunningDockerExecutor {
             cancel_token: Arc::new(CancellationToken::new()),
             default_timeout: builder.default_timeout,
             workdir: builder.workdir.clone(),
+            output_read_size,
         };
 
         if let Some(tmp_dockerfile_name) = tmp_dockerfile_name {
@@ -364,6 +371,7 @@ impl RunningDockerExecutor {
             envs: self.env.clone(),
             timeout_ms,
             cwd: Some(workdir.display().to_string()),
+            output_read_size: Some(self.output_read_size),
         });
         let mut events = client
             .exec_shell(request)

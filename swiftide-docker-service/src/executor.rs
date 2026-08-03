@@ -15,7 +15,7 @@ use tonic::{Request, Response, Status};
 
 use crate::command_cleanup::CommandGuard;
 
-const READ_BUFFER_SIZE: usize = 8 * 1024;
+const DEFAULT_OUTPUT_READ_SIZE: usize = 8 * 1024;
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Generated gRPC shell service types.
@@ -55,7 +55,18 @@ fn shell_events(
             envs,
             timeout_ms,
             cwd,
+            output_read_size,
         } = request;
+
+        let output_read_size = match output_read_size {
+            None => DEFAULT_OUTPUT_READ_SIZE,
+            Some(0) => Err(Status::invalid_argument(
+                "output read size must be greater than zero",
+            ))?,
+            Some(output_read_size) => usize::try_from(output_read_size).map_err(|_| {
+                Status::invalid_argument("output read size exceeds platform limits")
+            })?,
+        };
 
         let timeout = timeout_ms.map(Duration::from_millis);
         tracing::debug!(?timeout, "resolved timeout for shell request");
@@ -98,13 +109,13 @@ fn shell_events(
         let stdout = child.stdout().take().expect("stdout is configured as piped");
         let stderr = child.stderr().take().expect("stderr is configured as piped");
         let mut process = CommandGuard::new(child);
-        let stdout = ReaderStream::with_capacity(stdout, READ_BUFFER_SIZE).map(|chunk| {
+        let stdout = ReaderStream::with_capacity(stdout, output_read_size).map(|chunk| {
             chunk.map(|bytes| {
                 tracing::info!(stream = "stdout", bytes = bytes.len(), "Captured command output");
                 Event::Stdout(bytes)
             })
         });
-        let stderr = ReaderStream::with_capacity(stderr, READ_BUFFER_SIZE).map(|chunk| {
+        let stderr = ReaderStream::with_capacity(stderr, output_read_size).map(|chunk| {
             chunk.map(|bytes| {
                 tracing::info!(stream = "stderr", bytes = bytes.len(), "Captured command output");
                 Event::Stderr(bytes)
@@ -434,6 +445,7 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
+            output_read_size: None,
         };
 
         let mut stream = MyShellExecutor
@@ -463,6 +475,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn uses_configured_output_read_size() {
+        let request = ShellRequest {
+            command: "printf abcdef; printf uvwxyz >&2".into(),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+            output_read_size: Some(3),
+        };
+
+        let mut stream = MyShellExecutor
+            .exec_shell(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        while let Some(event) = stream.next().await {
+            match event.unwrap().event.unwrap() {
+                Event::Stdout(bytes) => {
+                    assert!(bytes.len() <= 3);
+                    stdout.extend_from_slice(&bytes);
+                }
+                Event::Stderr(bytes) => {
+                    assert!(bytes.len() <= 3);
+                    stderr.extend_from_slice(&bytes);
+                }
+                Event::ExitCode(0) => {}
+                event => panic!("unexpected event: {event:?}"),
+            }
+        }
+
+        assert_eq!(stdout, b"abcdef");
+        assert_eq!(stderr, b"uvwxyz");
+    }
+
+    #[tokio::test]
+    async fn rejects_zero_output_read_size() {
+        let request = ShellRequest {
+            command: "printf ignored".into(),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+            output_read_size: Some(0),
+        };
+
+        let mut stream = MyShellExecutor
+            .exec_shell(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        let error = stream.next().await.unwrap().unwrap_err();
+
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
     async fn streams_partial_output_before_timeout_result() {
         let request = ShellRequest {
             command: "printf before-timeout; sleep 30 & :".into(),
@@ -471,6 +544,7 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(3_000),
             cwd: None,
+            output_read_size: None,
         };
 
         let (stdout, stderr, outcome) = execute(request).await;
@@ -489,6 +563,7 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
+            output_read_size: None,
         };
 
         let (stdout, stderr, outcome) = execute(request).await;
@@ -512,6 +587,7 @@ mod tests {
             envs: Default::default(),
             timeout_ms: None,
             cwd: None,
+            output_read_size: None,
         };
         let mut events = MyShellExecutor
             .exec_shell(Request::new(request))
@@ -550,6 +626,7 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
+            output_read_size: None,
         };
 
         let (stdout, stderr, outcome) = execute(req).await;
@@ -567,6 +644,7 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
+            output_read_size: None,
         };
 
         let (stdout, stderr, outcome) = execute(req).await;
@@ -585,6 +663,7 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
+            output_read_size: None,
         };
 
         let (stdout, stderr, outcome) = execute(req).await;
@@ -619,6 +698,7 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
+            output_read_size: None,
         };
 
         let (stdout, stderr, outcome) = execute(req).await;
@@ -651,6 +731,7 @@ mod tests {
                 .collect(),
             timeout_ms: Some(5_000),
             cwd: None,
+            output_read_size: None,
         };
 
         let (stdout, stderr, outcome) = execute(req).await;
