@@ -382,6 +382,11 @@ impl RunningDockerExecutor {
         let mut output = Vec::new();
         while let Some(event) = events.message().await.map_err(anyhow::Error::from)? {
             match event.event {
+                Some(codegen::shell_event::Event::Output(bytes)) => {
+                    // Older services cannot identify the source stream. Keep their merged bytes
+                    // available through the combined output without copying them.
+                    output.push(CommandOutputChunk::Stdout(bytes));
+                }
                 Some(codegen::shell_event::Event::Stdout(bytes)) => {
                     output.push(CommandOutputChunk::Stdout(bytes));
                 }

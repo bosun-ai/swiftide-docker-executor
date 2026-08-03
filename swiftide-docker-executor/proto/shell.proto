@@ -27,9 +27,9 @@ message ShellRequest {
 }
 
 message ShellEvent {
-  reserved 1;
-
   oneof event {
+    // Merged output emitted by older executor images.
+    bytes output = 1;
     int32 exit_code = 2;
     uint64 timed_out_after_ms = 3;
     bytes stdout = 4;
