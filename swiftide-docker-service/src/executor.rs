@@ -15,7 +15,6 @@ use tonic::{Request, Response, Status};
 
 use crate::command_cleanup::CommandGuard;
 
-const DEFAULT_OUTPUT_READ_SIZE: usize = 8 * 1024;
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Generated gRPC shell service types.
@@ -55,18 +54,7 @@ fn shell_events(
             envs,
             timeout_ms,
             cwd,
-            output_read_size,
         } = request;
-
-        let output_read_size = match output_read_size {
-            None => DEFAULT_OUTPUT_READ_SIZE,
-            Some(0) => Err(Status::invalid_argument(
-                "output read size must be greater than zero",
-            ))?,
-            Some(output_read_size) => usize::try_from(output_read_size).map_err(|_| {
-                Status::invalid_argument("output read size exceeds platform limits")
-            })?,
-        };
 
         let timeout = timeout_ms.map(Duration::from_millis);
         tracing::debug!(?timeout, "resolved timeout for shell request");
@@ -109,21 +97,19 @@ fn shell_events(
         let stdout = child.stdout().take().expect("stdout is configured as piped");
         let stderr = child.stderr().take().expect("stderr is configured as piped");
         let mut process = CommandGuard::new(child);
-        let stdout = ReaderStream::with_capacity(stdout, output_read_size).map(|chunk| {
+        let stdout = ReaderStream::new(stdout).map(|chunk| {
             chunk.map(|bytes| {
                 tracing::info!(stream = "stdout", bytes = bytes.len(), "Captured command output");
                 Event::Stdout(bytes)
             })
         });
-        let stderr = ReaderStream::with_capacity(stderr, output_read_size).map(|chunk| {
+        let stderr = ReaderStream::new(stderr).map(|chunk| {
             chunk.map(|bytes| {
                 tracing::info!(stream = "stderr", bytes = bytes.len(), "Captured command output");
                 Event::Stderr(bytes)
             })
         });
         let mut output = stream::select(stdout, stderr);
-        let mut output_closed = false;
-        let mut exit_status: Option<std::process::ExitStatus> = None;
         let deadline = async {
             match timeout {
                 Some(limit) => time::sleep(limit).await,
@@ -132,81 +118,80 @@ fn shell_events(
         };
         tokio::pin!(deadline);
 
-        loop {
-            if output_closed
-                && let Some(status) = exit_status
-            {
+        let (status, output_closed) = loop {
+            let chunk = tokio::select! {
+                chunk = output.next() => chunk.transpose().map_err(output_error),
+                status = process.wait_for_shell() => break (Some(status), false),
+                () = &mut deadline => break (None, false),
+            };
+            match chunk? {
+                Some(event) => yield shell_event(event),
+                None => {
+                    let status = tokio::select! {
+                        status = process.wait_for_shell() => Some(status),
+                        () = &mut deadline => None,
+                    };
+                    break (status, true);
+                }
+            }
+        };
+        let status = status.transpose().map_err(wait_error)?;
+
+        if let Some(status) = status {
+            let output_closed = if output_closed {
+                true
+            } else {
+                loop {
+                    let chunk = tokio::select! {
+                        chunk = output.next() => chunk.transpose().map_err(output_error),
+                        () = &mut deadline => break false,
+                    };
+                    match chunk? {
+                        Some(event) => yield shell_event(event),
+                        None => break true,
+                    }
+                }
+            };
+
+            if output_closed {
                 let exit_code = status.code().unwrap_or(-1);
                 tracing::info!(exit_code, "Command executed");
                 process.disarm();
                 yield shell_event(Event::ExitCode(exit_code));
                 return;
             }
+        }
 
-            let event: Result<ProcessEvent, Status> = tokio::select! {
-                chunk = output.next(), if !output_closed => {
-                    match chunk {
-                        Some(Ok(chunk)) => Ok(ProcessEvent::Output(chunk)),
-                        Some(Err(err)) => Err(Status::internal(format!("Failed to read command output: {err}"))),
-                        None => Ok(ProcessEvent::OutputClosed),
-                    }
-                }
-                status = process.wait_for_shell(), if exit_status.is_none() => {
-                    status.map(ProcessEvent::Exit).map_err(|err| {
-                        Status::internal(format!("Failed to wait for command: {err}"))
-                    })
-                }
-                () = &mut deadline => {
-                    Ok(ProcessEvent::Timeout)
+        let limit = timeout.expect("deadline only completes when configured");
+        tracing::warn!(?limit, "Command exceeded timeout; terminating");
+        process.terminate();
+
+        let drain_deadline = time::sleep(OUTPUT_DRAIN_TIMEOUT);
+        tokio::pin!(drain_deadline);
+        loop {
+            let chunk = tokio::select! {
+                chunk = output.next() => chunk.transpose().map_err(output_error),
+                () = &mut drain_deadline => {
+                    tracing::warn!("Timed out draining command output");
+                    break;
                 }
             };
-
-            match event? {
-                ProcessEvent::OutputClosed => output_closed = true,
-                ProcessEvent::Output(event) => {
-                    yield shell_event(event);
-                }
-                ProcessEvent::Exit(status) => {
-                    exit_status = Some(status);
-                }
-                ProcessEvent::Timeout => {
-                    let limit = timeout.expect("deadline only completes when configured");
-                    tracing::warn!(?limit, "Command exceeded timeout; terminating");
-                    process.terminate();
-
-                    let drain_deadline = time::sleep(OUTPUT_DRAIN_TIMEOUT);
-                    tokio::pin!(drain_deadline);
-                    while !output_closed {
-                        let event: Result<Option<Event>, Status> = tokio::select! {
-                            chunk = output.next() => {
-                                chunk.transpose().map_err(|err| {
-                                    Status::internal(format!("Failed to read command output: {err}"))
-                                })
-                            }
-                            () = &mut drain_deadline => {
-                                tracing::warn!("Timed out draining command output");
-                                break;
-                            }
-                        };
-                        match event? {
-                            Some(event) => yield shell_event(event),
-                            None => output_closed = true,
-                        }
-                    }
-
-                    yield shell_event(Event::TimedOutAfterMs(duration_to_millis(limit)));
-                    return;
-                }
+            match chunk? {
+                Some(event) => yield shell_event(event),
+                None => break,
             }
         }
+
+        yield shell_event(Event::TimedOutAfterMs(duration_to_millis(limit)));
     })
 }
 
-enum ProcessEvent {
-    Output(Event),
-    OutputClosed,
-    Exit(std::process::ExitStatus),
-    Timeout,
+fn output_error(err: std::io::Error) -> Status {
+    Status::internal(format!("Failed to read command output: {err}"))
+}
+
+fn wait_error(err: std::io::Error) -> Status {
+    Status::internal(format!("Failed to wait for command: {err}"))
 }
 
 fn spawn_background_command(
@@ -381,31 +366,25 @@ mod tests {
     use tokio::time;
     use tonic::Request;
 
-    async fn execute(request: ShellRequest) -> (Vec<u8>, Vec<u8>, Event) {
+    async fn execute(request: ShellRequest) -> (Vec<u8>, Event) {
         let mut events = MyShellExecutor
             .exec_shell(Request::new(request))
             .await
             .unwrap()
             .into_inner();
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
+        let mut output = Vec::new();
         let mut result = None;
 
         while let Some(event) = events.next().await {
             match event.unwrap().event.unwrap() {
-                Event::Stdout(bytes) => stdout.extend_from_slice(&bytes),
-                Event::Stderr(bytes) => stderr.extend_from_slice(&bytes),
+                Event::Stdout(bytes) | Event::Stderr(bytes) => output.extend_from_slice(&bytes),
                 event @ (Event::ExitCode(_) | Event::TimedOutAfterMs(_)) => {
                     result = Some(event);
                 }
             }
         }
 
-        (
-            stdout,
-            stderr,
-            result.expect("shell stream must end with a result"),
-        )
+        (output, result.expect("shell stream must end with a result"))
     }
 
     fn process_exists(pid: i32) -> bool {
@@ -445,7 +424,6 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
-            output_read_size: None,
         };
 
         let mut stream = MyShellExecutor
@@ -475,67 +453,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn uses_configured_output_read_size() {
-        let request = ShellRequest {
-            command: "printf abcdef; printf uvwxyz >&2".into(),
-            env_clear: false,
-            env_remove: vec![],
-            envs: Default::default(),
-            timeout_ms: Some(5_000),
-            cwd: None,
-            output_read_size: Some(3),
-        };
-
-        let mut stream = MyShellExecutor
-            .exec_shell(Request::new(request))
-            .await
-            .unwrap()
-            .into_inner();
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-
-        while let Some(event) = stream.next().await {
-            match event.unwrap().event.unwrap() {
-                Event::Stdout(bytes) => {
-                    assert!(bytes.len() <= 3);
-                    stdout.extend_from_slice(&bytes);
-                }
-                Event::Stderr(bytes) => {
-                    assert!(bytes.len() <= 3);
-                    stderr.extend_from_slice(&bytes);
-                }
-                Event::ExitCode(0) => {}
-                event => panic!("unexpected event: {event:?}"),
-            }
-        }
-
-        assert_eq!(stdout, b"abcdef");
-        assert_eq!(stderr, b"uvwxyz");
-    }
-
-    #[tokio::test]
-    async fn rejects_zero_output_read_size() {
-        let request = ShellRequest {
-            command: "printf ignored".into(),
-            env_clear: false,
-            env_remove: vec![],
-            envs: Default::default(),
-            timeout_ms: Some(5_000),
-            cwd: None,
-            output_read_size: Some(0),
-        };
-
-        let mut stream = MyShellExecutor
-            .exec_shell(Request::new(request))
-            .await
-            .unwrap()
-            .into_inner();
-        let error = stream.next().await.unwrap().unwrap_err();
-
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-    }
-
-    #[tokio::test]
     async fn streams_partial_output_before_timeout_result() {
         let request = ShellRequest {
             command: "printf before-timeout; sleep 30 & :".into(),
@@ -544,13 +461,11 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(3_000),
             cwd: None,
-            output_read_size: None,
         };
 
-        let (stdout, stderr, outcome) = execute(request).await;
+        let (output, outcome) = execute(request).await;
 
-        assert_eq!(stdout, b"before-timeout");
-        assert!(stderr.is_empty());
+        assert_eq!(output, b"before-timeout");
         assert_eq!(outcome, Event::TimedOutAfterMs(3_000));
     }
 
@@ -563,13 +478,11 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
-            output_read_size: None,
         };
 
-        let (stdout, stderr, outcome) = execute(request).await;
+        let (output, outcome) = execute(request).await;
 
-        assert_eq!(stdout, [0xff]);
-        assert!(stderr.is_empty());
+        assert_eq!(output, [0xff]);
         assert_eq!(outcome, Event::ExitCode(0));
     }
 
@@ -587,7 +500,6 @@ mod tests {
             envs: Default::default(),
             timeout_ms: None,
             cwd: None,
-            output_read_size: None,
         };
         let mut events = MyShellExecutor
             .exec_shell(Request::new(request))
@@ -626,13 +538,11 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
-            output_read_size: None,
         };
 
-        let (stdout, stderr, outcome) = execute(req).await;
+        let (output, outcome) = execute(req).await;
         assert_eq!(outcome, Event::ExitCode(0));
-        assert_eq!(stdout, b"shebang-env\n");
-        assert!(stderr.is_empty());
+        assert_eq!(output, b"shebang-env\n");
     }
 
     #[tokio::test]
@@ -644,13 +554,11 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
-            output_read_size: None,
         };
 
-        let (stdout, stderr, outcome) = execute(req).await;
+        let (output, outcome) = execute(req).await;
         assert_eq!(outcome, Event::ExitCode(0));
-        assert_eq!(stdout, b"direct-sh\n");
-        assert!(stderr.is_empty());
+        assert_eq!(output, b"direct-sh\n");
     }
 
     #[tokio::test]
@@ -663,13 +571,11 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
-            output_read_size: None,
         };
 
-        let (stdout, stderr, outcome) = execute(req).await;
+        let (output, outcome) = execute(req).await;
         assert_eq!(outcome, Event::ExitCode(0));
-        assert_eq!(stdout, b"py-ok\n");
-        assert!(stderr.is_empty());
+        assert_eq!(output, b"py-ok\n");
     }
 
     #[tokio::test]
@@ -698,14 +604,12 @@ mod tests {
             envs: Default::default(),
             timeout_ms: Some(5_000),
             cwd: None,
-            output_read_size: None,
         };
 
-        let (stdout, stderr, outcome) = execute(req).await;
+        let (output, outcome) = execute(req).await;
 
         assert_eq!(outcome, Event::ExitCode(0));
-        assert_eq!(stdout, b"5\nline-0\nline-1\n");
-        assert!(stderr.is_empty());
+        assert_eq!(output, b"5\nline-0\nline-1\n");
     }
 
     #[tokio::test]
@@ -731,13 +635,11 @@ mod tests {
                 .collect(),
             timeout_ms: Some(5_000),
             cwd: None,
-            output_read_size: None,
         };
 
-        let (stdout, stderr, outcome) = execute(req).await;
+        let (output, outcome) = execute(req).await;
 
         assert_eq!(outcome, Event::ExitCode(0));
-        assert_eq!(stdout, b"from_profile");
-        assert!(stderr.is_empty());
+        assert_eq!(output, b"from_profile");
     }
 }

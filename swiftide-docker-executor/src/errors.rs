@@ -33,9 +33,6 @@ pub enum DockerExecutorError {
 
     #[error(transparent)]
     ContainerStart(#[from] ContainerStartError),
-
-    #[error("output read size must be greater than zero")]
-    InvalidOutputReadSize,
 }
 
 #[derive(Error, Debug)]

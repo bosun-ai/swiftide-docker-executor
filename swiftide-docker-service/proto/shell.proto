@@ -21,9 +21,6 @@ message ShellRequest {
 
   // Optional working directory for the command execution.
   optional string cwd = 7;
-
-  // Optional maximum bytes read from each output pipe per chunk.
-  optional uint64 output_read_size = 8;
 }
 
 message ShellEvent {

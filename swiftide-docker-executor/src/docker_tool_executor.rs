@@ -3,8 +3,6 @@ use uuid::Uuid;
 
 use crate::{DockerExecutorError, RunningDockerExecutor};
 
-const DEFAULT_OUTPUT_READ_SIZE: usize = 8 * 1024;
-
 /// Build a docker image with bollard and start it up
 #[derive(Clone, Debug)]
 pub struct DockerExecutor {
@@ -19,7 +17,6 @@ pub struct DockerExecutor {
     pub(crate) retain_on_drop: bool,
     pub(crate) default_timeout: Option<Duration>,
     pub(crate) workdir: PathBuf,
-    pub(crate) output_read_size: usize,
 }
 
 impl Default for DockerExecutor {
@@ -36,7 +33,6 @@ impl Default for DockerExecutor {
             retain_on_drop: false,
             default_timeout: None,
             workdir: "/app".into(),
-            output_read_size: DEFAULT_OUTPUT_READ_SIZE,
         }
     }
 }
@@ -101,13 +97,6 @@ impl DockerExecutor {
     /// Remove any default timeout previously configured on this executor.
     pub fn clear_default_timeout(&mut self) -> &mut Self {
         self.default_timeout = None;
-
-        self
-    }
-
-    /// Set the maximum bytes read from an output pipe per chunk (default 8 KiB).
-    pub fn with_output_read_size(&mut self, output_read_size: usize) -> &mut Self {
-        self.output_read_size = output_read_size;
 
         self
     }
