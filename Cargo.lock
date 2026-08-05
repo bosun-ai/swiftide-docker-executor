@@ -2409,7 +2409,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swiftide-agents"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=c61d00e8672d169fcf1b253b147453b30ff9544a#c61d00e8672d169fcf1b253b147453b30ff9544a"
+source = "git+https://github.com/bosun-ai/swiftide?rev=104e5a65a47316fe704c5653026a9e5b78eb94b9#104e5a65a47316fe704c5653026a9e5b78eb94b9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2438,7 +2438,7 @@ dependencies = [
 [[package]]
 name = "swiftide-core"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=c61d00e8672d169fcf1b253b147453b30ff9544a#c61d00e8672d169fcf1b253b147453b30ff9544a"
+source = "git+https://github.com/bosun-ai/swiftide?rev=104e5a65a47316fe704c5653026a9e5b78eb94b9#104e5a65a47316fe704c5653026a9e5b78eb94b9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2522,7 +2522,7 @@ dependencies = [
 [[package]]
 name = "swiftide-indexing"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=c61d00e8672d169fcf1b253b147453b30ff9544a#c61d00e8672d169fcf1b253b147453b30ff9544a"
+source = "git+https://github.com/bosun-ai/swiftide?rev=104e5a65a47316fe704c5653026a9e5b78eb94b9#104e5a65a47316fe704c5653026a9e5b78eb94b9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2548,7 +2548,7 @@ dependencies = [
 [[package]]
 name = "swiftide-macros"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=c61d00e8672d169fcf1b253b147453b30ff9544a#c61d00e8672d169fcf1b253b147453b30ff9544a"
+source = "git+https://github.com/bosun-ai/swiftide?rev=104e5a65a47316fe704c5653026a9e5b78eb94b9#104e5a65a47316fe704c5653026a9e5b78eb94b9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2565,7 +2565,7 @@ dependencies = [
 [[package]]
 name = "swiftide-tasks"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=c61d00e8672d169fcf1b253b147453b30ff9544a#c61d00e8672d169fcf1b253b147453b30ff9544a"
+source = "git+https://github.com/bosun-ai/swiftide?rev=104e5a65a47316fe704c5653026a9e5b78eb94b9#104e5a65a47316fe704c5653026a9e5b78eb94b9"
 dependencies = [
  "async-trait",
  "dyn-clone",
