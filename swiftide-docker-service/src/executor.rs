@@ -453,6 +453,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn starts_background_commands() {
+        let request = ShellRequest {
+            command: "sleep 0.01 &".into(),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+        };
+
+        let (output, outcome) = execute(request).await;
+
+        assert_eq!(output, b"Background command started");
+        assert_eq!(outcome, Event::ExitCode(0));
+    }
+
+    #[tokio::test]
     async fn streams_partial_output_before_timeout_result() {
         let request = ShellRequest {
             command: "printf before-timeout; sleep 30 & :".into(),
