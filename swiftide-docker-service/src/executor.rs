@@ -6,17 +6,15 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use bytes::Bytes;
-use futures_util::Stream;
+use futures_util::{Stream, StreamExt as _, stream};
 use process_wrap::tokio::{CommandWrap, ProcessGroup};
-use tokio::io::AsyncReadExt as _;
-use tokio::net::unix::pipe;
 use tokio::process::Command;
 use tokio::time;
+use tokio_util::io::ReaderStream;
 use tonic::{Request, Response, Status};
 
 use crate::command_cleanup::CommandGuard;
 
-const READ_BUFFER_SIZE: usize = 8 * 1024;
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Generated gRPC shell service types.
@@ -74,7 +72,7 @@ fn shell_events(
                 env_remove,
                 envs,
             )?;
-            yield shell_event(Event::Output(Bytes::from_static(b"Background command started")));
+            yield shell_event(Event::Stdout(Bytes::from_static(b"Background command started")));
             yield shell_event(Event::ExitCode(0));
             return;
         }
@@ -87,27 +85,31 @@ fn shell_events(
             env_remove,
             envs,
         )?;
-        let (sender, mut output) =
-            pipe::pipe().map_err(|err| Status::internal(format!("Failed to create output pipe: {err}")))?;
-        let stdout = sender
-            .into_blocking_fd()
-            .map_err(|err| Status::internal(format!("Failed to configure output pipe: {err}")))?;
-        let stderr = stdout
-            .try_clone()
-            .map_err(|err| Status::internal(format!("Failed to clone output pipe: {err}")))?;
-        command_process.stdout(stdout).stderr(stderr);
+        command_process.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut command_process = CommandWrap::from(command_process);
         command_process.wrap(ProcessGroup::leader());
-        let child = command_process.spawn().map_err(|err| {
+        let mut child = command_process.spawn().map_err(|err| {
             tracing::error!(?err, "Failed to start command");
             Status::internal(format!("Failed to start command: {err}"))
         })?;
         drop(command_process);
+        let stdout = child.stdout().take().expect("stdout is configured as piped");
+        let stderr = child.stderr().take().expect("stderr is configured as piped");
         let mut process = CommandGuard::new(child);
-        let mut read_buffer = [0_u8; READ_BUFFER_SIZE];
-        let mut output_closed = false;
-        let mut exit_status: Option<std::process::ExitStatus> = None;
+        let stdout = ReaderStream::new(stdout).map(|chunk| {
+            chunk.map(|bytes| {
+                tracing::info!(stream = "stdout", bytes = bytes.len(), "Captured command output");
+                Event::Stdout(bytes)
+            })
+        });
+        let stderr = ReaderStream::new(stderr).map(|chunk| {
+            chunk.map(|bytes| {
+                tracing::info!(stream = "stderr", bytes = bytes.len(), "Captured command output");
+                Event::Stderr(bytes)
+            })
+        });
+        let mut output = stream::select(stdout, stderr);
         let deadline = async {
             match timeout {
                 Some(limit) => time::sleep(limit).await,
@@ -116,83 +118,80 @@ fn shell_events(
         };
         tokio::pin!(deadline);
 
-        loop {
-            if output_closed
-                && let Some(status) = exit_status
-            {
+        let (status, output_closed) = loop {
+            let chunk = tokio::select! {
+                chunk = output.next() => chunk.transpose().map_err(output_error),
+                status = process.wait_for_shell() => break (Some(status), false),
+                () = &mut deadline => break (None, false),
+            };
+            match chunk? {
+                Some(event) => yield shell_event(event),
+                None => {
+                    let status = tokio::select! {
+                        status = process.wait_for_shell() => Some(status),
+                        () = &mut deadline => None,
+                    };
+                    break (status, true);
+                }
+            }
+        };
+        let status = status.transpose().map_err(wait_error)?;
+
+        if let Some(status) = status {
+            let output_closed = if output_closed {
+                true
+            } else {
+                loop {
+                    let chunk = tokio::select! {
+                        chunk = output.next() => chunk.transpose().map_err(output_error),
+                        () = &mut deadline => break false,
+                    };
+                    match chunk? {
+                        Some(event) => yield shell_event(event),
+                        None => break true,
+                    }
+                }
+            };
+
+            if output_closed {
                 let exit_code = status.code().unwrap_or(-1);
                 tracing::info!(exit_code, "Command executed");
                 process.disarm();
                 yield shell_event(Event::ExitCode(exit_code));
                 return;
             }
+        }
 
-            let event: Result<ProcessEvent, Status> = tokio::select! {
-                read = output.read(&mut read_buffer), if !output_closed => {
-                    read.map(ProcessEvent::Output).map_err(|err| {
-                        Status::internal(format!("Failed to read command output: {err}"))
-                    })
-                }
-                status = process.wait_for_shell(), if exit_status.is_none() => {
-                    status.map(ProcessEvent::Exit).map_err(|err| {
-                        Status::internal(format!("Failed to wait for command: {err}"))
-                    })
-                }
-                () = &mut deadline => {
-                    Ok(ProcessEvent::Timeout)
+        let limit = timeout.expect("deadline only completes when configured");
+        tracing::warn!(?limit, "Command exceeded timeout; terminating");
+        process.terminate();
+
+        let drain_deadline = time::sleep(OUTPUT_DRAIN_TIMEOUT);
+        tokio::pin!(drain_deadline);
+        loop {
+            let chunk = tokio::select! {
+                chunk = output.next() => chunk.transpose().map_err(output_error),
+                () = &mut drain_deadline => {
+                    tracing::warn!("Timed out draining command output");
+                    break;
                 }
             };
-
-            match event? {
-                ProcessEvent::Output(0) => output_closed = true,
-                ProcessEvent::Output(read) => {
-                    tracing::info!(bytes = read, "Captured command output");
-                    yield shell_event(Event::Output(Bytes::copy_from_slice(&read_buffer[..read])));
-                }
-                ProcessEvent::Exit(status) => {
-                    exit_status = Some(status);
-                }
-                ProcessEvent::Timeout => {
-                    let limit = timeout.expect("deadline only completes when configured");
-                    tracing::warn!(?limit, "Command exceeded timeout; terminating");
-                    process.terminate();
-
-                    let drain_deadline = time::sleep(OUTPUT_DRAIN_TIMEOUT);
-                    tokio::pin!(drain_deadline);
-                    while !output_closed {
-                        let read: Result<Option<usize>, Status> = tokio::select! {
-                            read = output.read(&mut read_buffer) => {
-                                read.map(Some).map_err(|err| {
-                                    Status::internal(format!("Failed to read command output: {err}"))
-                                })
-                            }
-                            () = &mut drain_deadline => Ok(None)
-                        };
-                        match read? {
-                            Some(0) => output_closed = true,
-                            Some(read) => {
-                                tracing::info!(bytes = read, "Captured command output");
-                                yield shell_event(Event::Output(Bytes::copy_from_slice(&read_buffer[..read])));
-                            }
-                            None => {
-                                tracing::warn!("Timed out draining command output");
-                                break;
-                            }
-                        }
-                    }
-
-                    yield shell_event(Event::TimedOutAfterMs(duration_to_millis(limit)));
-                    return;
-                }
+            match chunk? {
+                Some(event) => yield shell_event(event),
+                None => break,
             }
         }
+
+        yield shell_event(Event::TimedOutAfterMs(duration_to_millis(limit)));
     })
 }
 
-enum ProcessEvent {
-    Output(usize),
-    Exit(std::process::ExitStatus),
-    Timeout,
+fn output_error(err: std::io::Error) -> Status {
+    Status::internal(format!("Failed to read command output: {err}"))
+}
+
+fn wait_error(err: std::io::Error) -> Status {
+    Status::internal(format!("Failed to wait for command: {err}"))
 }
 
 fn spawn_background_command(
@@ -378,7 +377,7 @@ mod tests {
 
         while let Some(event) = events.next().await {
             match event.unwrap().event.unwrap() {
-                Event::Output(bytes) => output.extend_from_slice(&bytes),
+                Event::Stdout(bytes) | Event::Stderr(bytes) => output.extend_from_slice(&bytes),
                 event @ (Event::ExitCode(_) | Event::TimedOutAfterMs(_)) => {
                     result = Some(event);
                 }
@@ -415,7 +414,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn streams_exact_output_in_pipe_order() {
+    async fn streams_output_in_observed_order() {
         let request = ShellRequest {
             command:
                 "printf 'first\\n'; sleep 0.05; printf 'second\\n' >&2; sleep 0.05; printf 'third\\n'"
@@ -427,11 +426,46 @@ mod tests {
             cwd: None,
         };
 
-        let (output, outcome) = tokio::time::timeout(Duration::from_secs(10), execute(request))
+        let mut stream = MyShellExecutor
+            .exec_shell(Request::new(request))
             .await
-            .expect("combined output pipe should close after the shell exits");
+            .unwrap()
+            .into_inner();
+        let events = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut events = Vec::new();
+            while let Some(event) = stream.next().await {
+                events.push(event.unwrap().event.unwrap());
+            }
+            events
+        })
+        .await
+        .expect("output pipes should close after the shell exits");
 
-        assert_eq!(output, b"first\nsecond\nthird\n");
+        assert_eq!(
+            events,
+            [
+                Event::Stdout(Bytes::from_static(b"first\n")),
+                Event::Stderr(Bytes::from_static(b"second\n")),
+                Event::Stdout(Bytes::from_static(b"third\n")),
+                Event::ExitCode(0),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn starts_background_commands() {
+        let request = ShellRequest {
+            command: "sleep 0.01 &".into(),
+            env_clear: false,
+            env_remove: vec![],
+            envs: Default::default(),
+            timeout_ms: Some(5_000),
+            cwd: None,
+        };
+
+        let (output, outcome) = execute(request).await;
+
+        assert_eq!(output, b"Background command started");
         assert_eq!(outcome, Event::ExitCode(0));
     }
 
@@ -497,7 +531,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             event.event,
-            Some(Event::Output(Bytes::from_static(b"ready")))
+            Some(Event::Stdout(Bytes::from_static(b"ready")))
         );
         let child_pid = fs::read_to_string(pid_file).unwrap().parse().unwrap();
 

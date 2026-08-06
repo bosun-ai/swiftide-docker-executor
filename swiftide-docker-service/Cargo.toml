@@ -14,6 +14,7 @@ categories.workspace = true
 
 [dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio-util = { version = "0.7.16", features = ["io"] }
 tonic.workspace = true
 prost.workspace = true
 bytes.workspace = true

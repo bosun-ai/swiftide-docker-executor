@@ -12,6 +12,11 @@ const TEST_DOCKERFILE: &str = "Dockerfile.tests";
 const TEST_DOCKERFILE_ALPINE: &str = "Dockerfile.alpine.tests";
 const TEST_DOCKERFILE_ENTRYPOINT: &str = "Dockerfile.entrypoint.tests";
 
+fn stream_string<'a, T: AsRef<[u8]> + 'a>(chunks: impl Iterator<Item = &'a T>) -> String {
+    String::from_utf8_lossy(&chunks.flat_map(AsRef::as_ref).copied().collect::<Vec<_>>())
+        .into_owned()
+}
+
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn test_runs_docker_and_echos() {
     let executor = DockerExecutor::default()
@@ -37,7 +42,8 @@ async fn test_runs_docker_and_echos() {
         .await
         .unwrap();
 
-    assert_eq!(output.to_string_lossy(), "stdoutstderr");
+    assert_eq!(stream_string(output.stdout()), "stdout");
+    assert_eq!(stream_string(output.stderr()), "stderr");
 
     let output = executor
         .exec_cmd(&Command::shell(
@@ -46,7 +52,9 @@ async fn test_runs_docker_and_echos() {
         .await
         .unwrap();
 
-    assert_eq!(output.to_string_lossy(), "first\nsecond\nthird\n");
+    assert_eq!(stream_string(output.stdout()), "first\nthird\n");
+    assert_eq!(stream_string(output.stderr()), "second\n");
+    assert_eq!(output.to_string(), "first\nsecond\nthird\n");
 
     let error = executor
         .exec_cmd(&Command::shell(
@@ -58,7 +66,8 @@ async fn test_runs_docker_and_echos() {
     let CommandError::NonZeroExit(output) = error else {
         panic!("expected non-zero exit");
     };
-    assert_eq!(output.to_string_lossy(), "failed-outfailed-err");
+    assert_eq!(stream_string(output.stdout()), "failed-out");
+    assert_eq!(stream_string(output.stderr()), "failed-err");
 
     let output = executor
         .exec_cmd(&Command::shell("which rg"))

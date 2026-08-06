@@ -15,7 +15,9 @@ use std::{
     time::Duration,
 };
 pub use swiftide_core::ToolExecutor;
-use swiftide_core::{Command, CommandError, CommandOutput, Loader as _, prelude::StreamExt as _};
+use swiftide_core::{
+    Command, CommandError, CommandOutput, CommandOutputChunk, Loader as _, prelude::StreamExt as _,
+};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
@@ -373,10 +375,18 @@ impl RunningDockerExecutor {
         while let Some(event) = events.message().await.map_err(anyhow::Error::from)? {
             match event.event {
                 Some(codegen::shell_event::Event::Output(bytes)) => {
-                    output.extend_from_slice(&bytes);
+                    // Older services cannot identify the source stream. Keep their merged bytes
+                    // available through the combined output without copying them.
+                    output.push(CommandOutputChunk::Stdout(bytes));
+                }
+                Some(codegen::shell_event::Event::Stdout(bytes)) => {
+                    output.push(CommandOutputChunk::Stdout(bytes));
+                }
+                Some(codegen::shell_event::Event::Stderr(bytes)) => {
+                    output.push(CommandOutputChunk::Stderr(bytes));
                 }
                 Some(codegen::shell_event::Event::ExitCode(exit_code)) => {
-                    let output = CommandOutput::new(output);
+                    let output = CommandOutput::from_chunks(output);
                     return if exit_code == 0 {
                         Ok(output)
                     } else {
@@ -386,7 +396,7 @@ impl RunningDockerExecutor {
                 Some(codegen::shell_event::Event::TimedOutAfterMs(timeout_ms)) => {
                     return Err(CommandError::TimedOut {
                         timeout: Duration::from_millis(timeout_ms),
-                        output: CommandOutput::new(output),
+                        output: CommandOutput::from_chunks(output),
                     });
                 }
                 None => {
