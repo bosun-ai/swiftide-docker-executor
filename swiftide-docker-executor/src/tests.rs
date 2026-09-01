@@ -1,8 +1,15 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::Result;
 use bollard::{models::ContainerStateStatusEnum, query_parameters::InspectContainerOptions};
-use swiftide_core::{Command, CommandError, Loader as _, ToolExecutor as _, indexing::TextNode};
+use swiftide_core::{
+    Command, CommandError, CommandOutputChunk, CommandOutputSink, Loader as _, ToolExecutor as _,
+    indexing::TextNode,
+};
 use tokio_stream::StreamExt as _;
 
 use crate::{DockerExecutor, DockerExecutorError};
@@ -11,6 +18,15 @@ use crate::{DockerExecutor, DockerExecutorError};
 const TEST_DOCKERFILE: &str = "Dockerfile.tests";
 const TEST_DOCKERFILE_ALPINE: &str = "Dockerfile.alpine.tests";
 const TEST_DOCKERFILE_ENTRYPOINT: &str = "Dockerfile.entrypoint.tests";
+
+#[derive(Clone, Default)]
+struct RecordedOutput(Arc<Mutex<Vec<CommandOutputChunk>>>);
+
+impl CommandOutputSink for RecordedOutput {
+    fn on_chunk(&mut self, chunk: &CommandOutputChunk) {
+        self.0.lock().unwrap().push(chunk.clone());
+    }
+}
 
 fn stream_string<'a, T: AsRef<[u8]> + 'a>(chunks: impl Iterator<Item = &'a T>) -> String {
     String::from_utf8_lossy(&chunks.flat_map(AsRef::as_ref).copied().collect::<Vec<_>>())
@@ -95,6 +111,31 @@ async fn test_runs_docker_and_echos() {
         output.to_string_lossy().contains("Cargo.toml"),
         "{output:?} does not contain expected path"
     );
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_streams_output_before_shell_completion() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("streaming-test")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+    let mut output = RecordedOutput::default();
+    let observed = output.clone();
+    let command = Command::shell("printf first; sleep 1; printf second >&2");
+    let execution = executor.exec_cmd_streaming(&command, &mut output);
+    tokio::pin!(execution);
+
+    tokio::select! {
+        result = &mut execution => panic!("command finished before streaming output: {result:?}"),
+        () = tokio::time::sleep(Duration::from_millis(300)) => {}
+    }
+
+    assert_eq!(observed.0.lock().unwrap()[0].as_bytes().as_ref(), b"first");
+    assert_eq!(execution.await.unwrap().to_string_lossy(), "firstsecond");
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
