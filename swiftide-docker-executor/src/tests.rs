@@ -1,8 +1,4 @@
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use bollard::{models::ContainerStateStatusEnum, query_parameters::InspectContainerOptions};
@@ -10,6 +6,7 @@ use swiftide_core::{
     Command, CommandError, CommandOutputChunk, CommandOutputSink, Loader as _, ToolExecutor as _,
     indexing::TextNode,
 };
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt as _;
 
 use crate::{DockerExecutor, DockerExecutorError};
@@ -19,12 +16,11 @@ const TEST_DOCKERFILE: &str = "Dockerfile.tests";
 const TEST_DOCKERFILE_ALPINE: &str = "Dockerfile.alpine.tests";
 const TEST_DOCKERFILE_ENTRYPOINT: &str = "Dockerfile.entrypoint.tests";
 
-#[derive(Clone, Default)]
-struct RecordedOutput(Arc<Mutex<Vec<CommandOutputChunk>>>);
+struct RecordedOutput(mpsc::UnboundedSender<CommandOutputChunk>);
 
 impl CommandOutputSink for RecordedOutput {
     fn on_chunk(&mut self, chunk: &CommandOutputChunk) {
-        self.0.lock().unwrap().push(chunk.clone());
+        self.0.send(chunk.clone()).unwrap();
     }
 }
 
@@ -123,18 +119,22 @@ async fn test_streams_output_before_shell_completion() {
         .start()
         .await
         .unwrap();
-    let mut output = RecordedOutput::default();
-    let observed = output.clone();
+    let (output, mut observed) = mpsc::unbounded_channel();
+    let mut output = RecordedOutput(output);
     let command = Command::shell("printf first; sleep 1; printf second >&2");
     let execution = executor.exec_cmd_streaming(&command, &mut output);
     tokio::pin!(execution);
 
-    tokio::select! {
-        result = &mut execution => panic!("command finished before streaming output: {result:?}"),
-        () = tokio::time::sleep(Duration::from_millis(300)) => {}
-    }
+    let first_chunk = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            result = &mut execution => panic!("command finished before streaming output: {result:?}"),
+            chunk = observed.recv() => chunk.expect("output stream closed before yielding output"),
+        }
+    })
+    .await
+    .expect("timed out waiting for streamed output");
 
-    assert_eq!(observed.0.lock().unwrap()[0].as_bytes().as_ref(), b"first");
+    assert_eq!(first_chunk.as_bytes().as_ref(), b"first");
     assert_eq!(execution.await.unwrap().to_string_lossy(), "firstsecond");
 }
 
