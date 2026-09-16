@@ -16,7 +16,8 @@ use std::{
 };
 pub use swiftide_core::ToolExecutor;
 use swiftide_core::{
-    Command, CommandError, CommandOutput, CommandOutputChunk, Loader as _, prelude::StreamExt as _,
+    Command, CommandError, CommandOutput, CommandOutputChunk, CommandOutputSink, Loader as _,
+    prelude::StreamExt as _,
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -62,18 +63,29 @@ impl From<RunningDockerExecutor> for Arc<dyn ToolExecutor> {
 impl ToolExecutor for RunningDockerExecutor {
     #[tracing::instrument(skip(self), err)]
     async fn exec_cmd(&self, cmd: &Command) -> Result<CommandOutput, CommandError> {
+        self.exec_cmd_streaming(cmd, &mut ()).await
+    }
+
+    #[tracing::instrument(skip_all, err)]
+    async fn exec_cmd_streaming(
+        &self,
+        cmd: &Command,
+        output: &mut dyn CommandOutputSink,
+    ) -> Result<CommandOutput, CommandError> {
         let workdir = self.resolve_workdir(cmd);
         let timeout = self.resolve_timeout(cmd);
 
         match cmd {
             Command::Shell { command, .. } => {
-                self.exec_shell(command, workdir.as_ref(), timeout).await
+                self.exec_shell(command, workdir.as_ref(), timeout, output)
+                    .await
             }
             Command::ReadFile { path, .. } => {
-                self.exec_read_file(workdir.as_ref(), path, timeout).await
+                self.exec_read_file(workdir.as_ref(), path, timeout, output)
+                    .await
             }
             Command::WriteFile { path, content, .. } => {
-                self.exec_write_file(workdir.as_ref(), path, content, timeout)
+                self.exec_write_file(workdir.as_ref(), path, content, timeout, output)
                     .await
             }
             _ => unimplemented!(),
@@ -218,7 +230,12 @@ impl RunningDockerExecutor {
             let removal_cmd = format!("rm -f -- {removal_args}");
 
             executor
-                .exec_shell(&removal_cmd, Path::new("/"), executor.default_timeout)
+                .exec_shell(
+                    &removal_cmd,
+                    Path::new("/"),
+                    executor.default_timeout,
+                    &mut (),
+                )
                 .await
                 .context("failed to remove temporary dockerfile")
                 .map_err(DockerExecutorError::Start)?;
@@ -346,6 +363,7 @@ impl RunningDockerExecutor {
         cmd: &str,
         workdir: &Path,
         timeout: Option<Duration>,
+        output_sink: &mut dyn CommandOutputSink,
     ) -> Result<CommandOutput, CommandError> {
         let mut client = ShellExecutorClient::connect(format!(
             "http://{}:{}",
@@ -377,13 +395,19 @@ impl RunningDockerExecutor {
                 Some(codegen::shell_event::Event::Output(bytes)) => {
                     // Older services cannot identify the source stream. Keep their merged bytes
                     // available through the combined output without copying them.
-                    output.push(CommandOutputChunk::Stdout(bytes));
+                    let chunk = CommandOutputChunk::Stdout(bytes);
+                    output_sink.on_chunk(&chunk);
+                    output.push(chunk);
                 }
                 Some(codegen::shell_event::Event::Stdout(bytes)) => {
-                    output.push(CommandOutputChunk::Stdout(bytes));
+                    let chunk = CommandOutputChunk::Stdout(bytes);
+                    output_sink.on_chunk(&chunk);
+                    output.push(chunk);
                 }
                 Some(codegen::shell_event::Event::Stderr(bytes)) => {
-                    output.push(CommandOutputChunk::Stderr(bytes));
+                    let chunk = CommandOutputChunk::Stderr(bytes);
+                    output_sink.on_chunk(&chunk);
+                    output.push(chunk);
                 }
                 Some(codegen::shell_event::Event::ExitCode(exit_code)) => {
                     let output = CommandOutput::from_chunks(output);
@@ -412,42 +436,44 @@ impl RunningDockerExecutor {
         )))
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, output))]
     async fn exec_read_file(
         &self,
         workdir: &Path,
         path: &Path,
         timeout: Option<Duration>,
+        output: &mut dyn CommandOutputSink,
     ) -> Result<CommandOutput, CommandError> {
         let path = path.to_string_lossy();
         let mut cmd = String::with_capacity(path.len() + 8);
         cmd.push_str("cat -- ");
         push_shell_word(&mut cmd, &path);
-        self.exec_shell(&cmd, workdir, timeout).await
+        self.exec_shell(&cmd, workdir, timeout, output).await
     }
 
-    #[tracing::instrument(skip(self, content))]
+    #[tracing::instrument(skip(self, content, output))]
     async fn exec_write_file(
         &self,
         workdir: &Path,
         path: &Path,
         content: &str,
         timeout: Option<Duration>,
+        output: &mut dyn CommandOutputSink,
     ) -> Result<CommandOutput, CommandError> {
         let cmd = write_file_command(path, content);
 
-        let write_file_result = self.exec_shell(&cmd, workdir, timeout).await;
+        let write_file_result = self.exec_shell(&cmd, workdir, timeout, output).await;
 
         // If the directory or file does not exist, create it
         if let Err(CommandError::NonZeroExit(write_file)) = &write_file_result {
-            let output = write_file.to_string_lossy().to_lowercase();
+            let failure_text = write_file.to_string_lossy().to_lowercase();
             let missing_path = [
                 "no such file or directory",
                 "directory nonexistent",
                 "nonexistent directory",
             ]
             .iter()
-            .any(|&s| output.contains(s));
+            .any(|&s| failure_text.contains(s));
 
             if missing_path {
                 let parent = path.parent().context("No parent directory")?;
@@ -455,9 +481,9 @@ impl RunningDockerExecutor {
                 let mut mkdircmd = String::with_capacity(parent.len() + 12);
                 mkdircmd.push_str("mkdir -p -- ");
                 push_shell_word(&mut mkdircmd, &parent);
-                let _ = self.exec_shell(&mkdircmd, workdir, timeout).await?;
+                let _ = self.exec_shell(&mkdircmd, workdir, timeout, output).await?;
 
-                return self.exec_shell(&cmd, workdir, timeout).await;
+                return self.exec_shell(&cmd, workdir, timeout, output).await;
             }
         }
 
