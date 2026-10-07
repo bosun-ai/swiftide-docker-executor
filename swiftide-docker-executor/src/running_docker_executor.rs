@@ -63,14 +63,14 @@ impl From<RunningDockerExecutor> for Arc<dyn ToolExecutor> {
 impl ToolExecutor for RunningDockerExecutor {
     #[tracing::instrument(skip(self), err)]
     async fn exec_cmd(&self, cmd: &Command) -> Result<CommandOutput, CommandError> {
-        self.exec_cmd_streaming(cmd, &mut ()).await
+        self.exec_cmd_streaming(cmd, &mut |_| {}).await
     }
 
     #[tracing::instrument(skip_all, err)]
     async fn exec_cmd_streaming(
         &self,
         cmd: &Command,
-        output: &mut dyn CommandOutputSink,
+        output: &mut CommandOutputSink<'_>,
     ) -> Result<CommandOutput, CommandError> {
         let workdir = self.resolve_workdir(cmd);
         let timeout = self.resolve_timeout(cmd);
@@ -234,7 +234,7 @@ impl RunningDockerExecutor {
                     &removal_cmd,
                     Path::new("/"),
                     executor.default_timeout,
-                    &mut (),
+                    &mut |_| {},
                 )
                 .await
                 .context("failed to remove temporary dockerfile")
@@ -363,7 +363,7 @@ impl RunningDockerExecutor {
         cmd: &str,
         workdir: &Path,
         timeout: Option<Duration>,
-        output_sink: &mut dyn CommandOutputSink,
+        output_sink: &mut CommandOutputSink<'_>,
     ) -> Result<CommandOutput, CommandError> {
         let mut client = ShellExecutorClient::connect(format!(
             "http://{}:{}",
@@ -396,17 +396,17 @@ impl RunningDockerExecutor {
                     // Older services cannot identify the source stream. Keep their merged bytes
                     // available through the combined output without copying them.
                     let chunk = CommandOutputChunk::Stdout(bytes);
-                    output_sink.on_chunk(&chunk);
+                    output_sink(&chunk);
                     output.push(chunk);
                 }
                 Some(codegen::shell_event::Event::Stdout(bytes)) => {
                     let chunk = CommandOutputChunk::Stdout(bytes);
-                    output_sink.on_chunk(&chunk);
+                    output_sink(&chunk);
                     output.push(chunk);
                 }
                 Some(codegen::shell_event::Event::Stderr(bytes)) => {
                     let chunk = CommandOutputChunk::Stderr(bytes);
-                    output_sink.on_chunk(&chunk);
+                    output_sink(&chunk);
                     output.push(chunk);
                 }
                 Some(codegen::shell_event::Event::ExitCode(exit_code)) => {
@@ -442,7 +442,7 @@ impl RunningDockerExecutor {
         workdir: &Path,
         path: &Path,
         timeout: Option<Duration>,
-        output: &mut dyn CommandOutputSink,
+        output: &mut CommandOutputSink<'_>,
     ) -> Result<CommandOutput, CommandError> {
         let path = path.to_string_lossy();
         let mut cmd = String::with_capacity(path.len() + 8);
@@ -458,7 +458,7 @@ impl RunningDockerExecutor {
         path: &Path,
         content: &str,
         timeout: Option<Duration>,
-        output: &mut dyn CommandOutputSink,
+        output: &mut CommandOutputSink<'_>,
     ) -> Result<CommandOutput, CommandError> {
         let cmd = write_file_command(path, content);
 

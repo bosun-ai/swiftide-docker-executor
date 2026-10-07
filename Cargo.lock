@@ -912,9 +912,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.13"
+version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f44da3a8150a6703ed5d34e164b875fd14c2cdab9af1252a9a1020bde2bdc54"
+checksum = "7d29020232d6aa3fb1daca64c1127cf662cf97f254ae16c18c05b8ab635fc118"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2085,9 +2085,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.39"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2c118cb077cca2822033836dfb1b975355dfb784b5e8da48f7b6c5db74e60e"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
@@ -2121,9 +2121,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -2409,7 +2409,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swiftide-agents"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2438,7 +2438,7 @@ dependencies = [
 [[package]]
 name = "swiftide-core"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2522,7 +2522,7 @@ dependencies = [
 [[package]]
 name = "swiftide-indexing"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2543,12 +2543,13 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
 name = "swiftide-macros"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2565,7 +2566,7 @@ dependencies = [
 [[package]]
 name = "swiftide-tasks"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "async-trait",
  "dyn-clone",
