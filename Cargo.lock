@@ -2409,7 +2409,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "swiftide-agents"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2438,7 +2438,7 @@ dependencies = [
 [[package]]
 name = "swiftide-core"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2522,7 +2522,7 @@ dependencies = [
 [[package]]
 name = "swiftide-indexing"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2543,12 +2543,13 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
 name = "swiftide-macros"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2565,7 +2566,7 @@ dependencies = [
 [[package]]
 name = "swiftide-tasks"
 version = "0.32.1"
-source = "git+https://github.com/bosun-ai/swiftide?rev=4bec299136f9c5dc0fc81cd281122db017cf1fe4#4bec299136f9c5dc0fc81cd281122db017cf1fe4"
+source = "git+https://github.com/bosun-ai/swiftide?rev=1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313#1b0d6d46c9d7a66ea000ae0c3e08de3ec073b313"
 dependencies = [
  "async-trait",
  "dyn-clone",

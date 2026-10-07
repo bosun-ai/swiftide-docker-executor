@@ -3,8 +3,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use anyhow::Result;
 use bollard::{models::ContainerStateStatusEnum, query_parameters::InspectContainerOptions};
 use swiftide_core::{
-    Command, CommandError, CommandOutputChunk, CommandOutputSink, Loader as _, ToolExecutor as _,
-    indexing::TextNode,
+    Command, CommandError, CommandOutputChunk, Loader as _, ToolExecutor as _, indexing::TextNode,
 };
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt as _;
@@ -15,14 +14,6 @@ use crate::{DockerExecutor, DockerExecutorError};
 const TEST_DOCKERFILE: &str = "Dockerfile.tests";
 const TEST_DOCKERFILE_ALPINE: &str = "Dockerfile.alpine.tests";
 const TEST_DOCKERFILE_ENTRYPOINT: &str = "Dockerfile.entrypoint.tests";
-
-struct RecordedOutput(mpsc::UnboundedSender<CommandOutputChunk>);
-
-impl CommandOutputSink for RecordedOutput {
-    fn on_chunk(&mut self, chunk: &CommandOutputChunk) {
-        self.0.send(chunk.clone()).unwrap();
-    }
-}
 
 fn stream_string<'a, T: AsRef<[u8]> + 'a>(chunks: impl Iterator<Item = &'a T>) -> String {
     String::from_utf8_lossy(&chunks.flat_map(AsRef::as_ref).copied().collect::<Vec<_>>())
@@ -120,7 +111,9 @@ async fn test_streams_output_before_shell_completion() {
         .await
         .unwrap();
     let (output, mut observed) = mpsc::unbounded_channel();
-    let mut output = RecordedOutput(output);
+    let mut output = |chunk: &CommandOutputChunk| {
+        output.send(chunk.clone()).unwrap();
+    };
     let command = Command::shell("printf first; sleep 1; printf second >&2");
     let execution = executor.exec_cmd_streaming(&command, &mut output);
     tokio::pin!(execution);

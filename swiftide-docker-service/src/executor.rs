@@ -18,6 +18,7 @@ use crate::command_cleanup::CommandGuard;
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Generated gRPC shell service types.
+#[allow(clippy::double_must_use)]
 pub mod codegen {
     tonic::include_proto!("shell");
 }

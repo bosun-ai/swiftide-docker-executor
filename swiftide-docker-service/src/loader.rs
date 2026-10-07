@@ -9,6 +9,7 @@ use tonic::Status;
 // The module `shell` is created by Tonic automatically because your
 // package in shell.proto is named `shell`. The name "shell" below must
 // match `package shell;` from shell.proto.
+#[allow(clippy::double_must_use)]
 pub mod codegen {
     tonic::include_proto!("loader");
 }
