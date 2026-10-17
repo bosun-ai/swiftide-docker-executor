@@ -21,17 +21,17 @@ async-trait = "0.1"
 ignore = "0.4"
 walkdir = "2.5"
 tokio-tar = { version = "0.6", package = "astral-tokio-tar" }
-tokio-util = "0.7.16"
+tokio-util = "0.7"
 uuid = { version = "1.12", features = ["v4"] }
 tracing.workspace = true
 anyhow = "1.0"
 dirs = "6.0"
 tempfile = "3.19"
-http-body-util = "0.1.2"
+http-body-util = "0.1"
 flate2 = "1.1"
 tokio.workspace = true
-tokio-stream = "0.1.17"
-fs-err = { version = "3.1.0", features = ["tokio"] }
+tokio-stream = "0.1"
+fs-err = { version = "3.1", features = ["tokio"] }
 futures-util = "0.3"
 
 tonic.workspace = true
@@ -45,7 +45,7 @@ tonic-prost-build = { workspace = true }
 [dev-dependencies]
 swiftide-agents = "0.33"
 test-log = { version = "0.2", features = ["trace"] }
-insta = { version = "1.42.1", features = ["filters"] }
+insta = { version = "1.42", features = ["filters"] }
 pretty_assertions = "1.4"
 
 [features]
