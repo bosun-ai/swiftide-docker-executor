@@ -103,11 +103,12 @@ let output = executor
 The sandbox is applied before the shell starts, so `bash --login` profiles and all child processes run inside it:
 
 * Reads and execution are allowed everywhere.
-* Writes, including truncating, creating, removing and renaming, are denied everywhere except beneath `/tmp` and on `/dev/null`, `/dev/zero`, `/dev/full` and `/dev/tty`.
+* Writes, including truncating, creating, removing and renaming, are denied everywhere except on `/dev/null`, `/dev/zero`, `/dev/full` and `/dev/tty`, and beneath `/tmp/read-only-shell`, which `TMPDIR`, `TMP`, `TEMP` and `TEMPDIR` point to.
+* The rest of `/tmp` is readable but not writable, so **tools that hardcode `/tmp` fail with a permission error**. A sandboxed process can outlive its call and has the same uid as the service, so writing to all of `/tmp` would let it change what unsandboxed commands later run or read from there, such as the service's temporary scripts.
 * TCP bind and connect are denied, so the shell cannot reach the service's own unauthenticated gRPC port or a rootless Docker daemon on localhost. Landlock handles `connect` and `bind`. A seccomp filter handles what Landlock ABI 4 misses: TCP fast open, multipath TCP and other socket families. The filter also denies io_uring and kills processes using 32-bit system calls.
 * `no_new_privs` is set and all capabilities are cleared, so a root shell in a privileged pod cannot lift the sandbox.
 
-It fails closed. If the kernel lacks Landlock ABI 4 (Linux 6.7), or any step of applying the sandbox fails, the command does not run and the call returns `SandboxedShellError::SandboxUnavailable` naming the reason. An image that predates the RPC answers `UNIMPLEMENTED`, which surfaces as `SandboxedShellError::UnsupportedByImage`.
+It fails closed. If the kernel lacks Landlock ABI 4 (Linux 6.7), `/tmp/read-only-shell` is anything other than a directory owned by the current user with mode 0700, or any other step of applying the sandbox fails, the command does not run and the call returns `SandboxedShellError::SandboxUnavailable` naming the reason. An image that predates the RPC answers `UNIMPLEMENTED`, which surfaces as `SandboxedShellError::UnsupportedByImage`.
 
 ### What it does not protect against
 
@@ -119,9 +120,9 @@ This keeps an agent from changing the checkout. It is not a boundary against an 
 * **Metadata is not protected.** Landlock does not restrict `chmod`, `chown`, `utimes` or extended attribute changes on files the user owns, so `touch` on an existing file and `chmod` succeed.
 * **Signals are not restricted.** The shell can kill processes of the same user, including the service.
 * **`listen()` without `bind()`** still gets an ephemeral TCP port.
-* **`/tmp` is shared** with unsandboxed commands of the same user, so do not trust what is in it. This includes the temporary scripts the service writes for commands with a shebang.
+* **`/tmp/read-only-shell` is not trusted.** Sandboxed commands share it, and a write-capable command of the same user can put things in it. A sandboxed shell can also `chmod` it, which makes later sandboxed calls fail closed until it is fixed.
 
-Dropping capabilities also ends root's bypass of file permissions: in the sandbox, root cannot read files whose mode bits deny it. And tools that insist on writing outside `/tmp`, for instance to a cache in `HOME`, fail or need pointing elsewhere.
+Dropping capabilities also ends root's bypass of file permissions: in the sandbox, root cannot read files whose mode bits deny it. And tools that insist on writing elsewhere, for instance to a cache in `HOME`, fail or need pointing elsewhere.
 
 ## Loading files into a Swiftide indexing pipeline
 

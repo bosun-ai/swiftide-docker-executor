@@ -359,7 +359,7 @@ impl RunningDockerExecutor {
         cmd.timeout_duration().copied().or(self.default_timeout)
     }
 
-    /// Runs a shell command read-only: writes outside /tmp and TCP connections are denied for the
+    /// Runs a shell command read-only: writes outside `$TMPDIR` and TCP connections are denied for the
     /// shell and everything it starts. See `ExecSandboxedShell` in `proto/shell.proto` for the
     /// exact policy and its limits, which are not small: a mounted Docker socket, which
     /// `DockerExecutor` containers have by default, can still be used to escape.

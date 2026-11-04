@@ -13,11 +13,13 @@
 //!
 //! See the `ExecSandboxedShell` documentation in `proto/shell.proto` for the policy and its limits.
 
+use std::env;
 use std::error::Error;
 use std::ffi::OsString;
-use std::fs::File;
+use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, Read as _, Write as _};
 use std::os::fd::AsFd as _;
+use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
 use std::process::Stdio;
@@ -43,7 +45,14 @@ pub(crate) const LAUNCHER_SUBCOMMAND: &str = "__exec-in-read-only-sandbox";
 const REQUIRED_ABI: ABI = ABI::V4;
 const REQUIRED_ABI_VERSION: i64 = REQUIRED_ABI as i64;
 
-const WRITABLE_DIRECTORY: &str = "/tmp";
+/// The one directory the shell can write to. Not /tmp itself: a sandboxed process can outlive its
+/// call and has the same uid as the service, so it could rewrite what unsandboxed commands later
+/// run or read from there, such as the service's own temporary scripts.
+const WRITABLE_DIRECTORY: &str = "/tmp/read-only-shell";
+/// Set on the service, so that tests can run side by side. A request cannot influence it: requests
+/// only reach the launcher's environment, and the launcher takes the directory from its arguments.
+const WRITABLE_DIRECTORY_OVERRIDE: &str = "SWIFTIDE_DOCKER_SERVICE_SANDBOX_DIR";
+const TEMP_VARIABLES: [&str; 4] = ["TMPDIR", "TMP", "TEMP", "TEMPDIR"];
 const WRITABLE_DEVICES: [&str; 4] = ["/dev/null", "/dev/zero", "/dev/full", "/dev/tty"];
 
 const LANDLOCK_CREATE_RULESET_VERSION: libc::c_ulong = 1;
@@ -75,7 +84,13 @@ impl Confinement {
                 // Not a path from argv or the environment: the binary may have moved, and this
                 // is exactly the code that is running.
                 let mut launcher = Command::new("/proc/self/exe");
-                launcher.arg(LAUNCHER_SUBCOMMAND).arg(program);
+                launcher
+                    .arg(LAUNCHER_SUBCOMMAND)
+                    .arg(
+                        env::var_os(WRITABLE_DIRECTORY_OVERRIDE)
+                            .unwrap_or(WRITABLE_DIRECTORY.into()),
+                    )
+                    .arg(program);
                 launcher
             }
         }
@@ -136,18 +151,22 @@ pub(crate) fn launch(mut args: impl Iterator<Item = OsString>) -> ! {
         std::process::exit(LAUNCHER_EXIT_CODE);
     };
 
-    let (kind, reason) = match apply_read_only_sandbox() {
+    let (Some(directory), Some(program)) = (args.next(), args.next()) else {
+        let _ = status.write_all(&[EXEC_FAILED]);
+        let _ = status.write_all(b"the launcher needs a directory and a program");
+        std::process::exit(LAUNCHER_EXIT_CODE);
+    };
+
+    let (kind, reason) = match apply_read_only_sandbox(Path::new(&directory)) {
         Err(reason) => (SANDBOX_FAILED, reason),
-        Ok(()) => match args.next() {
-            None => (EXEC_FAILED, "the launcher got no program to run".into()),
-            Some(program) => {
-                let err = std::process::Command::new(&program)
-                    .args(args)
-                    .stdin(Stdio::null())
-                    .exec();
-                (EXEC_FAILED, format!("{}: {err}", program.to_string_lossy()))
-            }
-        },
+        Ok(()) => {
+            let err = std::process::Command::new(&program)
+                .args(args)
+                .envs(TEMP_VARIABLES.map(|variable| (variable, &directory)))
+                .stdin(Stdio::null())
+                .exec();
+            (EXEC_FAILED, format!("{}: {err}", program.to_string_lossy()))
+        }
     };
 
     let _ = status.write_all(&[kind]);
@@ -155,17 +174,64 @@ pub(crate) fn launch(mut args: impl Iterator<Item = OsString>) -> ! {
     std::process::exit(LAUNCHER_EXIT_CODE);
 }
 
-fn apply_read_only_sandbox() -> Result<(), String> {
+fn apply_read_only_sandbox(writable_directory: &Path) -> Result<(), String> {
     require_landlock_abi()?;
     close_inherited_descriptors_on_exec()?;
     // Everything needing privileges or path lookups happens first; restricting comes last.
-    let ruleset = read_only_ruleset().map_err(|err| format!("building the ruleset: {err}"))?;
+    let writable_directory = open_private_directory(writable_directory)?;
+    let ruleset = read_only_ruleset(writable_directory)
+        .map_err(|err| format!("building the ruleset: {err}"))?;
     drop_capabilities()?;
     let status = ruleset
         .restrict_self()
         .map_err(|err| format!("enforcing the ruleset: {err}"))?;
     require_full_enforcement(&status)?;
     deny_tcp_around_landlock().map_err(|err| format!("installing the seccomp filter: {err}"))
+}
+
+/// Opens the directory the shell may write to, creating it if needed.
+///
+/// An earlier write-capable command, running as the same user, may have planted something at this
+/// path. So this looks at what is there without following a symbolic link, and the Landlock rule
+/// is built from this descriptor rather than by resolving the path again. `O_PATH` means opening
+/// has no side effects whatever the file is.
+fn open_private_directory(path: &Path) -> Result<File, String> {
+    let shown = path.display();
+    match DirBuilder::new().mode(0o700).create(path) {
+        Err(err) if err.kind() != io::ErrorKind::AlreadyExists => {
+            return Err(format!("creating the writable directory {shown}: {err}"));
+        }
+        _ => {}
+    }
+
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|err| format!("opening the writable directory {shown}: {err}"))?;
+    let metadata = directory
+        .metadata()
+        .map_err(|err| format!("checking the writable directory {shown}: {err}"))?;
+
+    // SAFETY: geteuid takes no arguments and cannot fail.
+    let current_uid = unsafe { libc::geteuid() };
+    let mode = metadata.mode() & 0o7777;
+    if metadata.is_symlink() {
+        Err(format!("the writable directory {shown} is a symbolic link"))
+    } else if !metadata.is_dir() {
+        Err(format!("the writable directory {shown} is not a directory"))
+    } else if metadata.uid() != current_uid {
+        Err(format!(
+            "the writable directory {shown} is owned by uid {}, not {current_uid}",
+            metadata.uid()
+        ))
+    } else if mode != 0o700 {
+        Err(format!(
+            "the writable directory {shown} has mode {mode:04o}, not 0700"
+        ))
+    } else {
+        Ok(directory)
+    }
 }
 
 /// Landlock ABI 4 guards the `connect` and `bind` calls on plain TCP sockets, which leaves ways to
@@ -280,7 +346,7 @@ fn close_inherited_descriptors_on_exec() -> Result<(), String> {
 }
 
 /// Hard requirement: anything the kernel cannot enforce is an error, never a weaker sandbox.
-fn read_only_ruleset() -> Result<RulesetCreated, Box<dyn Error>> {
+fn read_only_ruleset(writable_directory: File) -> Result<RulesetCreated, Box<dyn Error>> {
     let mut ruleset = Ruleset::default()
         .set_compatibility(CompatLevel::HardRequirement)
         .handle_access(AccessFs::from_all(REQUIRED_ABI))?
@@ -292,13 +358,12 @@ fn read_only_ruleset() -> Result<RulesetCreated, Box<dyn Error>> {
             AccessFs::from_read(REQUIRED_ABI),
         ))?;
 
-    // A writable path that does not exist needs no rule: leaving it out only denies more.
-    if Path::new(WRITABLE_DIRECTORY).exists() {
-        ruleset = ruleset.add_rule(PathBeneath::new(
-            PathFd::new(WRITABLE_DIRECTORY)?,
-            AccessFs::from_all(REQUIRED_ABI),
-        ))?;
-    }
+    ruleset = ruleset.add_rule(PathBeneath::new(
+        writable_directory,
+        AccessFs::from_all(REQUIRED_ABI),
+    ))?;
+
+    // A device that does not exist needs no rule: leaving it out only denies more.
     for device in WRITABLE_DEVICES.iter().filter(|d| Path::new(d).exists()) {
         ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(device)?, AccessFs::WriteFile))?;
     }

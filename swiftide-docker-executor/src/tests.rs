@@ -1375,9 +1375,14 @@ async fn test_sandboxed_shell_is_read_only_in_a_container() {
             "{write} should fail"
         );
     }
-    sandboxed("echo scratch > /tmp/sandbox-note && cat /tmp/sandbox-note > /dev/null")
-        .await
-        .unwrap();
+    sandboxed("echo scratch > \"$(mktemp)\"").await.unwrap();
+    assert!(
+        matches!(
+            sandboxed("echo new > /tmp/sandbox-note").await,
+            Err(CommandError::NonZeroExit(_))
+        ),
+        "the rest of /tmp is read-only"
+    );
 
     // The service's own gRPC port is out of reach.
     let connect = sandboxed("echo hello > /dev/tcp/127.0.0.1/50051").await;
@@ -1408,20 +1413,22 @@ async fn test_sandboxed_shell_is_read_only_in_a_container() {
     assert_eq!(output.to_string_lossy().trim(), "original");
 
     // Background commands behave as on the normal path, inside the sandbox.
-    let started = sandboxed("(touch /app/sandbox-created.txt; touch /tmp/sandbox-done) &")
+    let started = sandboxed("(touch /app/sandbox-created.txt; touch \"$TMPDIR/done\") &")
         .await
         .unwrap();
     assert_eq!(started.to_string_lossy(), "Background command started");
     executor
         .exec_cmd(
             &Command::shell(
-                "until [ -e /tmp/sandbox-done ]; do sleep 0.05; done; \\
+                "until [ -e /tmp/read-only-shell/done ]; do sleep 0.05; done; \\
                  ! test -e /app/sandbox-created.txt",
             )
             .with_timeout(Duration::from_secs(10)),
         )
         .await
         .unwrap();
+
+    executor.shutdown().await.unwrap();
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -1437,7 +1444,7 @@ async fn test_sandboxed_shell_on_an_alpine_image() {
 
     let output = executor
         .exec_sandboxed_shell(
-            &Command::shell("echo scratch > /tmp/note && cat /tmp/note"),
+            &Command::shell("note=$(mktemp) && echo scratch > \"$note\" && cat \"$note\""),
             &mut |_| {},
         )
         .await
@@ -1450,4 +1457,6 @@ async fn test_sandboxed_shell_on_an_alpine_image() {
             .await,
         Err(CommandError::NonZeroExit(_))
     ));
+
+    executor.shutdown().await.unwrap();
 }

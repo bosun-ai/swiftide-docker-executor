@@ -9,6 +9,7 @@ use std::fs;
 use std::io::{ErrorKind, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd as _;
+use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -38,6 +39,14 @@ impl Service {
 
     async fn start() -> Self {
         Self::start_with(Command::new(env!("CARGO_BIN_EXE_swiftide-docker-service"))).await
+    }
+
+    /// A service whose sandboxed shells write to `directory`, so that a test can plant things
+    /// there without affecting tests running alongside it.
+    async fn with_sandbox_directory(directory: &Path) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_swiftide-docker-service"));
+        command.env("SWIFTIDE_DOCKER_SERVICE_SANDBOX_DIR", directory);
+        Self::start_with(command).await
     }
 
     async fn start_with(mut command: Command) -> Self {
@@ -337,16 +346,15 @@ async fn writes_to_home_are_denied() {
 }
 
 #[tokio::test]
-async fn files_cannot_be_moved_or_hard_linked_out_of_the_checkout_into_tmp() {
+async fn files_cannot_be_moved_or_linked_from_the_checkout_into_the_writable_directory() {
     let service = Service::start().await;
     let workspace = Workspace::new();
-    let tmp = tempfile::tempdir().unwrap();
-    let tmp = tmp.path().display();
 
-    // A hard link in /tmp would make a checkout file writable through its writable name.
+    // A hard or symbolic link would make a checkout file writable through its writable name.
     for command in [
-        format!("ln existing.txt {tmp}/linked.txt"),
-        format!("mv existing.txt {tmp}/moved.txt"),
+        "ln existing.txt \"$TMPDIR/linked-$$.txt\"",
+        "mv existing.txt \"$TMPDIR/moved-$$.txt\"",
+        "ln -s \"$PWD/existing.txt\" \"$TMPDIR/symlink-$$\"; echo changed > \"$TMPDIR/symlink-$$\"",
     ] {
         service
             .sandboxed(workspace.request(command))
@@ -358,14 +366,16 @@ async fn files_cannot_be_moved_or_hard_linked_out_of_the_checkout_into_tmp() {
 }
 
 #[tokio::test]
-async fn files_cannot_be_moved_from_tmp_into_the_checkout() {
+async fn files_cannot_be_moved_from_the_writable_directory_into_the_checkout() {
     let service = Service::start().await;
     let workspace = Workspace::new();
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(tmp.path().join("payload"), "payload").unwrap();
 
     service
-        .sandboxed(workspace.request(format!("mv {}/payload new.txt", tmp.path().display())))
+        .sandboxed(
+            workspace.request(
+                "echo payload > \"$TMPDIR/payload-$$\"; mv \"$TMPDIR/payload-$$\" new.txt",
+            ),
+        )
         .await
         .unwrap()
         .assert_failed();
@@ -374,23 +384,300 @@ async fn files_cannot_be_moved_from_tmp_into_the_checkout() {
 }
 
 #[tokio::test]
-async fn writes_to_tmp_work() {
+async fn writes_work_in_the_private_directory_that_temp_variables_point_to() {
     let service = Service::start().await;
     let workspace = Workspace::new();
-    let tmp = tempfile::tempdir().unwrap();
-    let tmp = tmp.path().display();
 
     let outcome = service
-        .sandboxed(workspace.request(format!(
-            "set -e; echo scratch > {tmp}/note; cat {tmp}/note; : > {tmp}/note; \
-             mkdir {tmp}/dir; mv {tmp}/note {tmp}/dir/note; rm -r {tmp}/dir; \
-             mktemp > /dev/null"
+        .sandboxed(workspace.request(
+            r#"set -e
+for variable in "$TMPDIR" "$TMP" "$TEMP" "$TEMPDIR"; do
+    test "$variable" = /tmp/read-only-shell
+done
+dir=$(mktemp -d)
+case "$dir" in /tmp/read-only-shell/*) ;; *) exit 9 ;; esac
+echo scratch > "$dir/note"; cat "$dir/note"; : > "$dir/note"
+mkdir "$dir/sub"; mv "$dir/note" "$dir/sub/note"; rm -r "$dir"
+file=$(mktemp); rm "$file"
+cat <<EOF
+heredoc
+EOF
+"#,
+        ))
+        .await
+        .unwrap();
+
+    outcome.assert_succeeded();
+    assert_eq!(outcome.stdout, "scratch\nheredoc\n");
+}
+
+#[tokio::test]
+async fn python_tempfile_uses_the_private_directory() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+
+    let outcome = service
+        .sandboxed(workspace.request(python(
+            r#"import tempfile; print(tempfile.NamedTemporaryFile().name)"#,
         )))
         .await
         .unwrap();
 
     outcome.assert_succeeded();
-    assert_eq!(outcome.stdout, "scratch\n");
+    assert!(
+        outcome.stdout.starts_with("/tmp/read-only-shell/"),
+        "{outcome:#?}"
+    );
+}
+
+#[tokio::test]
+async fn a_request_cannot_point_the_temp_variables_or_the_writable_directory_elsewhere() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+    let mut request = workspace.request("printf %s \"$TMPDIR\"; echo denied > \"$PWD/new.txt\"");
+    request
+        .envs
+        .insert("TMPDIR".into(), workspace.checkout.display().to_string());
+    request.envs.insert(
+        "SWIFTIDE_DOCKER_SERVICE_SANDBOX_DIR".into(),
+        workspace.checkout.display().to_string(),
+    );
+
+    let outcome = service.sandboxed(request).await.unwrap();
+
+    outcome.assert_failed();
+    assert_eq!(outcome.stdout, "/tmp/read-only-shell");
+    workspace.assert_checkout_untouched();
+}
+
+#[tokio::test]
+async fn the_rest_of_tmp_is_readable_but_not_writable() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let existing = tmp.path().join("existing");
+    fs::write(&existing, "original\n").unwrap();
+    let tmp_display = tmp.path().display();
+    let existing_display = existing.display();
+
+    let read = service
+        .sandboxed(workspace.request(format!("cat {existing_display}; ls /tmp > /dev/null")))
+        .await
+        .unwrap();
+    read.assert_succeeded();
+    assert_eq!(read.stdout, "original\n");
+
+    let top_level = format!("/tmp/planted-by-sandbox-{}", std::process::id());
+    for command in [
+        format!("echo new > {tmp_display}/new"),
+        format!("echo changed > {existing_display}"),
+        format!(": > {existing_display}"),
+        format!("rm {existing_display}"),
+        format!("mv {existing_display} {tmp_display}/moved"),
+        format!("mkdir {tmp_display}/directory"),
+        format!("touch {top_level}"),
+    ] {
+        service
+            .sandboxed(workspace.request(command.as_str()))
+            .await
+            .unwrap()
+            .assert_failed();
+    }
+
+    assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 1, "nothing new");
+    assert_eq!(fs::read_to_string(&existing).unwrap(), "original\n");
+    assert!(!Path::new(&top_level).exists());
+}
+
+#[tokio::test]
+async fn a_sandboxed_process_cannot_rewrite_the_script_of_a_running_normal_command() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let script_path = tmp.path().join("script-path");
+    let script_path_display = script_path.display();
+
+    let (normal, sandboxed) = tokio::join!(
+        service.normal(workspace.request(format!(
+            "#!/bin/sh\necho \"$0\" > {script_path_display}\nsleep 1.5\necho the-original-script\n"
+        ))),
+        service.sandboxed(workspace.request(format!(
+            r#"until [ -s {script_path_display} ]; do sleep 0.02; done
+script=$(cat {script_path_display})
+case "$script" in /tmp/swiftide-script-*) echo in-script-directory ;; esac
+echo "echo hijacked" > "$script" || echo cannot-rewrite
+: > "$script" || echo cannot-truncate
+touch "$(dirname "$script")/planted" || echo cannot-plant
+mv "$script" "$script.moved" || echo cannot-move
+"#
+        ))),
+    );
+
+    let sandboxed = sandboxed.unwrap();
+    assert_eq!(
+        sandboxed.stdout,
+        "in-script-directory\ncannot-rewrite\ncannot-truncate\ncannot-plant\ncannot-move\n",
+        "{sandboxed:#?}"
+    );
+    let normal = normal.unwrap();
+    normal.assert_succeeded();
+    assert_eq!(normal.stdout, "the-original-script\n");
+}
+
+#[track_caller]
+fn assert_directory_rejected(status: &Status, reason: &str) {
+    assert_eq!(status.code(), Code::FailedPrecondition, "{status}");
+    assert!(status.message().contains("did not run"), "{status}");
+    assert!(status.message().contains(reason), "{status}");
+}
+
+#[tokio::test]
+async fn a_symlink_planted_at_the_writable_directory_fails_closed_and_writes_nothing_through_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new();
+    let planted = tmp.path().join("read-only-shell");
+    std::os::unix::fs::symlink(&workspace.checkout, &planted).unwrap();
+    let service = Service::with_sandbox_directory(&planted).await;
+
+    let status = service
+        .sandboxed(workspace.request("echo new > \"$TMPDIR/new\""))
+        .await
+        .unwrap_err();
+
+    assert_directory_rejected(&status, "symbolic link");
+    workspace.assert_checkout_untouched();
+}
+
+#[tokio::test]
+async fn a_dangling_symlink_planted_at_the_writable_directory_creates_nothing_at_its_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new();
+    let planted = tmp.path().join("read-only-shell");
+    let target = workspace.checkout.join("created-through-symlink");
+    std::os::unix::fs::symlink(&target, &planted).unwrap();
+    let service = Service::with_sandbox_directory(&planted).await;
+
+    let status = service
+        .sandboxed(workspace.request("touch \"$TMPDIR/new\""))
+        .await
+        .unwrap_err();
+
+    assert_directory_rejected(&status, "symbolic link");
+    assert!(!target.exists());
+    workspace.assert_checkout_untouched();
+}
+
+#[tokio::test]
+async fn a_file_planted_at_the_writable_directory_fails_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new();
+    let planted = tmp.path().join("read-only-shell");
+    fs::write(&planted, "planted").unwrap();
+    let service = Service::with_sandbox_directory(&planted).await;
+
+    let status = service
+        .sandboxed(workspace.request("echo should-not-run"))
+        .await
+        .unwrap_err();
+
+    assert_directory_rejected(&status, "not a directory");
+    assert_eq!(fs::read_to_string(&planted).unwrap(), "planted");
+}
+
+#[tokio::test]
+async fn an_open_writable_directory_fails_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new();
+    let planted = tmp.path().join("read-only-shell");
+    fs::create_dir(&planted).unwrap();
+    fs::set_permissions(&planted, fs::Permissions::from_mode(0o777)).unwrap();
+    let service = Service::with_sandbox_directory(&planted).await;
+
+    let status = service
+        .sandboxed(workspace.request("echo should-not-run"))
+        .await
+        .unwrap_err();
+
+    assert_directory_rejected(&status, "mode 0777");
+}
+
+#[tokio::test]
+async fn a_directory_owned_by_another_user_fails_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new();
+    let planted = tmp.path().join("read-only-shell");
+    fs::create_dir(&planted).unwrap();
+    fs::set_permissions(&planted, fs::Permissions::from_mode(0o700)).unwrap();
+    if std::os::unix::fs::chown(&planted, Some(12345), Some(12345)).is_err() {
+        eprintln!("skipped: giving a directory to another user needs CAP_CHOWN");
+        return;
+    }
+    let service = Service::with_sandbox_directory(&planted).await;
+
+    let status = service
+        .sandboxed(workspace.request("echo should-not-run"))
+        .await
+        .unwrap_err();
+
+    assert_directory_rejected(&status, "owned by uid 12345");
+}
+
+#[tokio::test]
+async fn a_sound_directory_left_by_an_earlier_call_is_reused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new();
+    let directory = tmp.path().join("read-only-shell");
+    let service = Service::with_sandbox_directory(&directory).await;
+
+    service
+        .sandboxed(workspace.request("echo kept > \"$TMPDIR/note\""))
+        .await
+        .unwrap()
+        .assert_succeeded();
+    let outcome = service
+        .sandboxed(workspace.request("cat \"$TMPDIR/note\""))
+        .await
+        .unwrap();
+
+    outcome.assert_succeeded();
+    assert_eq!(outcome.stdout, "kept\n");
+    assert_eq!(
+        fs::metadata(&directory).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
+}
+
+#[tokio::test]
+async fn a_shell_that_opens_up_its_directory_makes_later_calls_fail_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new();
+    let directory = tmp.path().join("read-only-shell");
+    let service = Service::with_sandbox_directory(&directory).await;
+
+    service
+        .sandboxed(workspace.request("chmod 777 \"$TMPDIR\""))
+        .await
+        .unwrap()
+        .assert_succeeded();
+    let status = service
+        .sandboxed(workspace.request("echo should-not-run"))
+        .await
+        .unwrap_err();
+
+    assert_directory_rejected(&status, "mode 0777");
+}
+
+#[tokio::test]
+async fn a_normal_command_does_not_get_the_sandbox_temp_variables() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+
+    let outcome = service
+        .normal(workspace.request("printf %s \"$TMPDIR\""))
+        .await
+        .unwrap();
+
+    assert_ne!(outcome.stdout, "/tmp/read-only-shell");
 }
 
 #[tokio::test]
@@ -627,22 +914,46 @@ async fn background_commands_report_as_on_the_normal_path() {
 
 #[tokio::test]
 async fn background_commands_run_inside_the_sandbox() {
-    let service = Service::start().await;
-    let workspace = Workspace::new();
     let tmp = tempfile::tempdir().unwrap();
-    let done = tmp.path().join("done");
+    let directory = tmp.path().join("read-only-shell");
+    let service = Service::with_sandbox_directory(&directory).await;
+    let workspace = Workspace::new();
+    let done = directory.join("done");
+
+    service
+        .sandboxed(workspace.request("(echo denied > new.txt; echo finished > \"$TMPDIR/done\") &"))
+        .await
+        .unwrap()
+        .assert_succeeded();
+
+    eventually("the background command wrote to its directory", || {
+        done.exists()
+    })
+    .await;
+    workspace.assert_checkout_untouched();
+}
+
+#[tokio::test]
+async fn a_background_command_that_outlives_its_call_still_cannot_write_to_tmp() {
+    let tmp = tempfile::tempdir().unwrap();
+    let directory = tmp.path().join("read-only-shell");
+    let service = Service::with_sandbox_directory(&directory).await;
+    let workspace = Workspace::new();
+    let shared = tempfile::tempdir().unwrap();
+    let planted = shared.path().join("planted");
+    let done = directory.join("done");
 
     service
         .sandboxed(workspace.request(format!(
-            "(echo denied > new.txt; echo finished > {}) &",
-            done.display()
+            "(sleep 0.3; echo planted > {}; echo finished > \"$TMPDIR/done\") &",
+            planted.display()
         )))
         .await
         .unwrap()
         .assert_succeeded();
 
-    eventually("the background command wrote to /tmp", || done.exists()).await;
-    workspace.assert_checkout_untouched();
+    eventually("the background command finished", || done.exists()).await;
+    assert!(!planted.exists());
 }
 
 #[tokio::test]
