@@ -6,15 +6,32 @@ mod command_cleanup;
 mod executor;
 #[cfg(feature = "file-loader")]
 mod loader;
+mod sandbox;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Before anything else, so that the launcher stays single-threaded.
+    let mut args = std::env::args_os().skip(1);
+    if args
+        .next()
+        .is_some_and(|arg| arg == sandbox::LAUNCHER_SUBCOMMAND)
+    {
+        sandbox::launch(args);
+    }
+
+    serve()
+}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn serve() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .compact()
         .with_ansi(false)
         .with_target(false)
         .init();
-    let addr = "0.0.0.0:50051".parse()?;
+    // Overridable so tests can run several services side by side.
+    let addr = std::env::var("SWIFTIDE_DOCKER_SERVICE_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:50051".to_string())
+        .parse()?;
 
     let version = env!("CARGO_PKG_VERSION");
     tracing::warn!("ShellExecutor {version} gRPC server listening on {}", addr);

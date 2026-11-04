@@ -1330,3 +1330,124 @@ async fn test_background_shell_command_returns_immediately() {
 
     assert_eq!(output.to_string_lossy(), "ready\n");
 }
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_sandboxed_shell_is_read_only_in_a_container() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE)
+        .with_context_path(".")
+        .with_image_name("tests-sandboxed-shell")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+    let sandboxed = async |command: &str| {
+        executor
+            .exec_sandboxed_shell(&Command::shell(command), &mut |_| {})
+            .await
+    };
+    let probe_file = "/app/sandbox-probe.txt";
+
+    executor
+        .exec_cmd(&Command::shell(format!(
+            "git init -q && git add Cargo.toml && \\
+             git -c user.name=t -c user.email=t@example.com commit -qm 'the first commit' && \\
+             echo original > {probe_file}"
+        )))
+        .await
+        .unwrap();
+
+    // Reads work, git included.
+    let log = sandboxed("git log --format=%s").await.unwrap();
+    assert_eq!(log.to_string_lossy().trim(), "the first commit");
+    sandboxed("git diff").await.unwrap();
+
+    // Writes fail in the checkout and in HOME, for root too, and work in /tmp.
+    for write in [
+        "echo new > /app/sandbox-created.txt",
+        &format!(": > {probe_file}"),
+        &format!("rm {probe_file}"),
+        "echo new > ~/sandbox-created.txt",
+        "bash -c 'echo new > /app/sandbox-created.txt'",
+    ] {
+        assert!(
+            matches!(sandboxed(write).await, Err(CommandError::NonZeroExit(_))),
+            "{write} should fail"
+        );
+    }
+    sandboxed("echo scratch > /tmp/sandbox-note && cat /tmp/sandbox-note > /dev/null")
+        .await
+        .unwrap();
+
+    // The service's own gRPC port is out of reach.
+    let connect = sandboxed("echo hello > /dev/tcp/127.0.0.1/50051").await;
+    assert!(
+        matches!(&connect, Err(CommandError::NonZeroExit(output))
+            if output.to_string_lossy().contains("Permission denied")),
+        "{connect:?}"
+    );
+
+    // Root loses all privileges.
+    let status = sandboxed("cat /proc/self/status").await.unwrap();
+    let status = status.to_string_lossy();
+    assert!(status.contains("NoNewPrivs:\t1"), "{status}");
+    for set in ["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"] {
+        assert!(
+            status.contains(&format!("{set}:\t0000000000000000")),
+            "{set} in {status}"
+        );
+    }
+
+    // Nothing leaked: the same service still writes for a normal call.
+    let output = executor
+        .exec_cmd(&Command::shell(format!(
+            "cat {probe_file}; echo new > {probe_file}"
+        )))
+        .await
+        .unwrap();
+    assert_eq!(output.to_string_lossy().trim(), "original");
+
+    // Background commands behave as on the normal path, inside the sandbox.
+    let started = sandboxed("(touch /app/sandbox-created.txt; touch /tmp/sandbox-done) &")
+        .await
+        .unwrap();
+    assert_eq!(started.to_string_lossy(), "Background command started");
+    executor
+        .exec_cmd(
+            &Command::shell(
+                "until [ -e /tmp/sandbox-done ]; do sleep 0.05; done; \\
+                 ! test -e /app/sandbox-created.txt",
+            )
+            .with_timeout(Duration::from_secs(10)),
+        )
+        .await
+        .unwrap();
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn test_sandboxed_shell_on_an_alpine_image() {
+    let executor = DockerExecutor::default()
+        .with_dockerfile(TEST_DOCKERFILE_ALPINE)
+        .with_context_path(".")
+        .with_image_name("tests-sandboxed-shell-alpine")
+        .to_owned()
+        .start()
+        .await
+        .unwrap();
+
+    let output = executor
+        .exec_sandboxed_shell(
+            &Command::shell("echo scratch > /tmp/note && cat /tmp/note"),
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+    assert_eq!(output.to_string_lossy().trim(), "scratch");
+
+    assert!(matches!(
+        executor
+            .exec_sandboxed_shell(&Command::shell("echo new > /app/new.txt"), &mut |_| {})
+            .await,
+        Err(CommandError::NonZeroExit(_))
+    ));
+}

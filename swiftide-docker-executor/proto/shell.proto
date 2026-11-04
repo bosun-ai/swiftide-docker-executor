@@ -6,6 +6,33 @@ package shell;
 service ShellExecutor {
   // Runs a shell command and streams its raw output.
   rpc ExecShell (ShellRequest) returns (stream ShellEvent) {}
+
+  // Runs a shell command read-only, in a sandbox applied before the shell starts, so `bash --login`
+  // profiles and every child process are confined too. Apart from the sandbox it behaves as
+  // ExecShell: same command building, background handling, cwd, env and timeout.
+  //
+  // This is a separate RPC so that it fails closed: images that predate it answer UNIMPLEMENTED,
+  // whereas a new field on ShellRequest would be ignored and the command would run unsandboxed.
+  //
+  // Requires Landlock ABI 4 (Linux 6.7) or later. If the kernel lacks it, or any step of applying
+  // the sandbox fails, the command does not run and the stream fails with FAILED_PRECONDITION
+  // naming the reason. There is no best-effort mode.
+  //
+  // Enforced policy:
+  // - Reads and execution are allowed everywhere.
+  // - Writes, including truncate, create, remove and rename, are denied everywhere except beneath /tmp and on /dev/null, /dev/zero, /dev/full and /dev/tty.
+  // - TCP bind and connect are denied, so the shell cannot reach this service's own unauthenticated gRPC port or a rootless Docker daemon on localhost. Landlock covers connect and bind; a seccomp filter covers what Landlock ABI 4 misses, namely TCP fast open, multipath TCP and socket families other than Unix, IPv4, IPv6 and netlink. It also denies io_uring and kills anything using 32-bit system calls.
+  // - no_new_privs is set and all capabilities are cleared, so a root shell in a privileged pod cannot lift the sandbox. Root also loses its bypass of file permissions: files whose mode bits deny its uid cannot be read.
+  //
+  // Known limits, not solved here (see the README):
+  // - Unix domain sockets stay reachable. That includes a git credential cache socket, and so the git token, and a mounted Docker socket, which gives full control of that Docker daemon. Containers started by DockerExecutor have one by default.
+  // - UDP and DNS stay open, so data can leave over them.
+  // - Secrets in the environment, and anything else readable on disk, stay readable.
+  // - Landlock does not restrict chmod, chown, utimes or xattr changes on files the user owns.
+  // - Signals are not restricted: the shell can kill processes of the same user, this service too.
+  // - listen() without bind() still gets an ephemeral TCP port.
+  // - /tmp is shared with unsandboxed commands of the same user.
+  rpc ExecSandboxedShell (ShellRequest) returns (stream ShellEvent) {}
 }
 
 // The request message containing the command to run.

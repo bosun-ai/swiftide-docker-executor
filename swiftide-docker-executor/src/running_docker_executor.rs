@@ -23,9 +23,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ContextBuilder, ContextError, DockerExecutor, DockerExecutorError, client::Client,
-    container_configurator::ContainerConfigurator, container_starter::ContainerStarter,
-    dockerfile_manager::DockerfileManager, image_builder::ImageBuilder,
+    ContextBuilder, ContextError, DockerExecutor, DockerExecutorError, SandboxedShellError,
+    client::Client, container_configurator::ContainerConfigurator,
+    container_starter::ContainerStarter, dockerfile_manager::DockerfileManager,
+    image_builder::ImageBuilder,
 };
 
 pub mod codegen {
@@ -358,6 +359,38 @@ impl RunningDockerExecutor {
         cmd.timeout_duration().copied().or(self.default_timeout)
     }
 
+    /// Runs a shell command read-only: writes outside /tmp and TCP connections are denied for the
+    /// shell and everything it starts. See `ExecSandboxedShell` in `proto/shell.proto` for the
+    /// exact policy and its limits, which are not small: a mounted Docker socket, which
+    /// `DockerExecutor` containers have by default, can still be used to escape.
+    ///
+    /// Otherwise behaves as `ToolExecutor::exec_cmd_streaming`. Fails closed: when the sandbox is
+    /// not available the command does not run and the error wraps a [`SandboxedShellError`].
+    #[tracing::instrument(skip_all, err)]
+    pub async fn exec_sandboxed_shell(
+        &self,
+        cmd: &Command,
+        output: &mut CommandOutputSink<'_>,
+    ) -> Result<CommandOutput, CommandError> {
+        let Command::Shell { command, .. } = cmd else {
+            return Err(anyhow::Error::from(SandboxedShellError::NotAShellCommand).into());
+        };
+        let request = self.shell_request(
+            command,
+            self.resolve_workdir(cmd).as_ref(),
+            self.resolve_timeout(cmd),
+        );
+        let events = self
+            .shell_client()
+            .await?
+            .exec_sandboxed_shell(request)
+            .await
+            .map_err(sandboxed_shell_error)?
+            .into_inner();
+
+        collect_shell_events(events, output, sandboxed_shell_error).await
+    }
+
     async fn exec_shell(
         &self,
         cmd: &str,
@@ -365,75 +398,49 @@ impl RunningDockerExecutor {
         timeout: Option<Duration>,
         output_sink: &mut CommandOutputSink<'_>,
     ) -> Result<CommandOutput, CommandError> {
-        let mut client = ShellExecutorClient::connect(format!(
+        let request = self.shell_request(cmd, workdir, timeout);
+        let events = self
+            .shell_client()
+            .await?
+            .exec_shell(request)
+            .await
+            .map_err(anyhow::Error::from)?
+            .into_inner();
+
+        collect_shell_events(events, output_sink, |status| {
+            anyhow::Error::from(status).into()
+        })
+        .await
+    }
+
+    async fn shell_client(
+        &self,
+    ) -> Result<ShellExecutorClient<tonic::transport::Channel>, CommandError> {
+        ShellExecutorClient::connect(format!(
             "http://{}:{}",
             self.container_ip, self.container_port
         ))
         .await
-        .map_err(anyhow::Error::from)?;
+        .map_err(|err| anyhow::Error::from(err).into())
+    }
 
+    fn shell_request(
+        &self,
+        cmd: &str,
+        workdir: &Path,
+        timeout: Option<Duration>,
+    ) -> codegen::ShellRequest {
         let timeout_ms = timeout.map(duration_to_millis);
         tracing::debug!(?timeout_ms, "sending shell request with timeout");
 
-        let request = tonic::Request::new(codegen::ShellRequest {
+        codegen::ShellRequest {
             command: cmd.to_string(),
             env_clear: self.env_clear,
             env_remove: self.remove_env.clone(),
             envs: self.env.clone(),
             timeout_ms,
             cwd: Some(workdir.display().to_string()),
-        });
-        let mut events = client
-            .exec_shell(request)
-            .await
-            .map_err(anyhow::Error::from)?
-            .into_inner();
-
-        let mut output = Vec::new();
-        while let Some(event) = events.message().await.map_err(anyhow::Error::from)? {
-            match event.event {
-                Some(codegen::shell_event::Event::Output(bytes)) => {
-                    // Older services cannot identify the source stream. Keep their merged bytes
-                    // available through the combined output without copying them.
-                    let chunk = CommandOutputChunk::Stdout(bytes);
-                    output_sink(&chunk);
-                    output.push(chunk);
-                }
-                Some(codegen::shell_event::Event::Stdout(bytes)) => {
-                    let chunk = CommandOutputChunk::Stdout(bytes);
-                    output_sink(&chunk);
-                    output.push(chunk);
-                }
-                Some(codegen::shell_event::Event::Stderr(bytes)) => {
-                    let chunk = CommandOutputChunk::Stderr(bytes);
-                    output_sink(&chunk);
-                    output.push(chunk);
-                }
-                Some(codegen::shell_event::Event::ExitCode(exit_code)) => {
-                    let output = CommandOutput::from_chunks(output);
-                    return if exit_code == 0 {
-                        Ok(output)
-                    } else {
-                        Err(CommandError::NonZeroExit(output))
-                    };
-                }
-                Some(codegen::shell_event::Event::TimedOutAfterMs(timeout_ms)) => {
-                    return Err(CommandError::TimedOut {
-                        timeout: Duration::from_millis(timeout_ms),
-                        output: CommandOutput::from_chunks(output),
-                    });
-                }
-                None => {
-                    return Err(CommandError::ExecutorError(anyhow::anyhow!(
-                        "Shell service returned an event without a payload"
-                    )));
-                }
-            }
         }
-
-        Err(CommandError::ExecutorError(anyhow::anyhow!(
-            "Shell output stream ended without an execution result"
-        )))
     }
 
     #[tracing::instrument(skip(self, output))]
@@ -514,6 +521,69 @@ impl RunningDockerExecutor {
     }
 }
 
+async fn collect_shell_events(
+    mut events: tonic::Streaming<codegen::ShellEvent>,
+    output_sink: &mut CommandOutputSink<'_>,
+    status_error: impl Fn(tonic::Status) -> CommandError,
+) -> Result<CommandOutput, CommandError> {
+    let mut output = Vec::new();
+    while let Some(event) = events.message().await.map_err(&status_error)? {
+        match event.event {
+            Some(codegen::shell_event::Event::Output(bytes)) => {
+                // Older services cannot identify the source stream. Keep their merged bytes
+                // available through the combined output without copying them.
+                let chunk = CommandOutputChunk::Stdout(bytes);
+                output_sink(&chunk);
+                output.push(chunk);
+            }
+            Some(codegen::shell_event::Event::Stdout(bytes)) => {
+                let chunk = CommandOutputChunk::Stdout(bytes);
+                output_sink(&chunk);
+                output.push(chunk);
+            }
+            Some(codegen::shell_event::Event::Stderr(bytes)) => {
+                let chunk = CommandOutputChunk::Stderr(bytes);
+                output_sink(&chunk);
+                output.push(chunk);
+            }
+            Some(codegen::shell_event::Event::ExitCode(exit_code)) => {
+                let output = CommandOutput::from_chunks(output);
+                return if exit_code == 0 {
+                    Ok(output)
+                } else {
+                    Err(CommandError::NonZeroExit(output))
+                };
+            }
+            Some(codegen::shell_event::Event::TimedOutAfterMs(timeout_ms)) => {
+                return Err(CommandError::TimedOut {
+                    timeout: Duration::from_millis(timeout_ms),
+                    output: CommandOutput::from_chunks(output),
+                });
+            }
+            None => {
+                return Err(CommandError::ExecutorError(anyhow::anyhow!(
+                    "Shell service returned an event without a payload"
+                )));
+            }
+        }
+    }
+
+    Err(CommandError::ExecutorError(anyhow::anyhow!(
+        "Shell output stream ended without an execution result"
+    )))
+}
+
+fn sandboxed_shell_error(status: tonic::Status) -> CommandError {
+    let error = match status.code() {
+        tonic::Code::Unimplemented => SandboxedShellError::UnsupportedByImage,
+        tonic::Code::FailedPrecondition => {
+            SandboxedShellError::SandboxUnavailable(status.message().to_string())
+        }
+        _ => return anyhow::Error::from(status).into(),
+    };
+    anyhow::Error::from(error).into()
+}
+
 fn write_file_command(path: &Path, content: &str) -> String {
     let path = path.to_string_lossy();
     let mut command = String::with_capacity(content.len() + path.len() + 20);
@@ -572,5 +642,93 @@ impl Drop for RunningDockerExecutor {
             handle.block_on(async move { this.shutdown().await })
         });
         tracing::debug!("Container stopped {container_id}");
+    }
+}
+
+#[cfg(test)]
+mod sandboxed_shell_tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    /// An executor whose gRPC server has no routes at all, which is how a service that predates
+    /// an RPC treats it: tonic itself answers UNIMPLEMENTED.
+    async fn executor_with_an_image_that_predates_the_rpc() -> RunningDockerExecutor {
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_routes(tonic::service::Routes::default())
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+        );
+
+        RunningDockerExecutor {
+            container_id: "no-container".into(),
+            docker: Client::lazy_client().await.unwrap(),
+            container_port: address.port().to_string(),
+            container_ip: address.ip(),
+            dropped: false,
+            retain_on_drop: true,
+            env_clear: false,
+            remove_env: Vec::new(),
+            env: HashMap::new(),
+            default_timeout: None,
+            workdir: PathBuf::from("/app"),
+            cancel_token: Arc::new(CancellationToken::new()),
+        }
+    }
+
+    fn sandboxed_shell_error_of(error: &CommandError) -> &SandboxedShellError {
+        let CommandError::ExecutorError(error) = error else {
+            panic!("expected an executor error, got {error:?}");
+        };
+        error
+            .downcast_ref()
+            .unwrap_or_else(|| panic!("expected a sandboxed shell error, got {error:?}"))
+    }
+
+    #[tokio::test]
+    async fn an_image_without_the_rpc_is_a_distinct_error_saying_the_image_is_too_old() {
+        let executor = executor_with_an_image_that_predates_the_rpc().await;
+
+        let error = executor
+            .exec_sandboxed_shell(&Command::shell("echo hi"), &mut |_| {})
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            sandboxed_shell_error_of(&error),
+            SandboxedShellError::UnsupportedByImage
+        ));
+        let message = error.to_string();
+        assert!(message.contains("did not run"), "{message}");
+        assert!(message.contains("too old"), "{message}");
+    }
+
+    #[test]
+    fn a_sandbox_that_cannot_be_applied_is_an_error_naming_the_reason() {
+        let error =
+            sandboxed_shell_error(tonic::Status::failed_precondition("this kernel has ABI 2"));
+
+        assert!(matches!(
+            sandboxed_shell_error_of(&error),
+            SandboxedShellError::SandboxUnavailable(reason) if reason == "this kernel has ABI 2"
+        ));
+    }
+
+    #[tokio::test]
+    async fn only_shell_commands_can_be_sandboxed() {
+        let executor = executor_with_an_image_that_predates_the_rpc().await;
+
+        let error = executor
+            .exec_sandboxed_shell(&Command::read_file("/etc/hostname"), &mut |_| {})
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            sandboxed_shell_error_of(&error),
+            SandboxedShellError::NotAShellCommand
+        ));
     }
 }
