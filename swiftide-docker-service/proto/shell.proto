@@ -6,6 +6,33 @@ package shell;
 service ShellExecutor {
   // Runs a shell command and streams its raw output.
   rpc ExecShell (ShellRequest) returns (stream ShellEvent) {}
+
+  // Runs a shell command read-only, in a sandbox applied before the shell starts, so `bash --login`
+  // profiles and every child process are confined too. Apart from the sandbox it behaves as
+  // ExecShell: same command building, background handling, cwd, env and timeout.
+  //
+  // This is a separate RPC so that it fails closed: images that predate it answer UNIMPLEMENTED,
+  // whereas a new field on ShellRequest would be ignored and the command would run unsandboxed.
+  //
+  // Requires Landlock ABI 4 (Linux 6.7) or later. If the kernel lacks it, or any step of applying
+  // the sandbox fails, the command does not run and the stream fails with FAILED_PRECONDITION
+  // naming the reason. That includes /tmp/read-only-shell being anything other than a directory
+  // owned by the current user with mode 0700. There is no best-effort mode.
+  //
+  // Enforced policy:
+  // - Reads and execution are allowed everywhere.
+  // - Writes, including truncate, create, remove and rename, are denied everywhere except on /dev/null, /dev/zero, /dev/full and /dev/tty, and beneath /tmp/read-only-shell, which TMPDIR, TMP, TEMP and TEMPDIR point to. The rest of /tmp is read-only, so tools that hardcode /tmp fail with a permission error. A sandboxed process can outlive its call, and writing to all of /tmp would let it change what unsandboxed commands of the same user run or read from there.
+  // - TCP connect, bind and listen are denied, so the shell cannot reach this service's own unauthenticated gRPC port or a rootless Docker daemon on localhost. Seccomp also denies what Landlock misses: TCP fast open, multipath TCP, SMC, TCP_ULP and io_uring. Socket families and protocols are allowlists. listen is denied for Unix sockets too, since seccomp cannot tell them apart.
+  // - no_new_privs is set and all capabilities are cleared, so a root shell in a privileged pod cannot lift the sandbox. Root also loses its bypass of file permissions: files whose mode bits deny its uid cannot be read.
+  //
+  // Known limits, not solved here (see the README):
+  // - Unix domain sockets stay reachable. That includes a git credential cache socket, and so the git token, and a mounted Docker socket, which gives full control of that Docker daemon. Containers started by DockerExecutor have one by default. Daemons left listening by earlier unsandboxed commands stay reachable.
+  // - UDP and DNS stay open, so data can leave over them.
+  // - Secrets in the environment, and anything else readable on disk, stay readable.
+  // - Landlock does not restrict chmod, chown, utimes or xattr changes on files the user owns.
+  // - Signals are not restricted: the shell can kill processes of the same user, this service too.
+  // - /tmp/read-only-shell is shared by sandboxed commands, and a write-capable command of the same user can put things in it, so do not trust its contents. A shell can also chmod it, which makes later sandboxed calls fail closed.
+  rpc ExecSandboxedShell (ShellRequest) returns (stream ShellEvent) {}
 }
 
 // The request message containing the command to run.

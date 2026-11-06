@@ -35,6 +35,29 @@ pub enum DockerExecutorError {
     ContainerStart(#[from] ContainerStartError),
 }
 
+/// Why a sandboxed shell command did not run. In every case nothing was executed.
+///
+/// `RunningDockerExecutor::exec_sandboxed_shell` returns these inside
+/// `CommandError::ExecutorError`; use `downcast_ref` to tell them apart.
+#[derive(Error, Debug)]
+pub enum SandboxedShellError {
+    /// The image's service predates `ExecSandboxedShell`.
+    #[error(
+        "the command did not run: this image's swiftide-docker-service is too old for a \
+         sandboxed shell (it answered UNIMPLEMENTED); rebuild the image with a newer service"
+    )]
+    UnsupportedByImage,
+
+    /// The service is new enough but could not apply the sandbox, for example on a kernel without
+    /// Landlock ABI 4. The service's message names the reason.
+    #[error("{0}")]
+    SandboxUnavailable(String),
+
+    /// Only `Command::Shell` can be sandboxed.
+    #[error("the command did not run: only shell commands can run in a sandboxed shell")]
+    NotAShellCommand,
+}
+
 #[derive(Error, Debug)]
 pub enum ContextError {
     #[error("error while trying to ignore files: {0}")]

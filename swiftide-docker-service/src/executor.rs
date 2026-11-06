@@ -14,6 +14,7 @@ use tokio_util::io::ReaderStream;
 use tonic::{Request, Response, Status};
 
 use crate::command_cleanup::CommandGuard;
+use crate::sandbox::Confinement;
 
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -27,26 +28,42 @@ use codegen::shell_event::Event;
 use codegen::shell_executor_server::ShellExecutor;
 use codegen::{ShellEvent, ShellRequest};
 
+type ShellEventStream = Pin<Box<dyn Stream<Item = Result<ShellEvent, Status>> + Send>>;
+
 /// gRPC shell executor service implementation.
 #[derive(Debug, Default)]
 pub struct MyShellExecutor;
 
 #[tonic::async_trait]
 impl ShellExecutor for MyShellExecutor {
-    type ExecShellStream = Pin<Box<dyn Stream<Item = Result<ShellEvent, Status>> + Send>>;
+    type ExecShellStream = ShellEventStream;
 
     #[tracing::instrument(skip_all)]
     async fn exec_shell(
         &self,
         request: Request<ShellRequest>,
     ) -> Result<Response<Self::ExecShellStream>, Status> {
-        Ok(Response::new(shell_events(request.into_inner())))
+        Ok(Response::new(shell_events(
+            request.into_inner(),
+            Confinement::None,
+        )))
+    }
+
+    type ExecSandboxedShellStream = ShellEventStream;
+
+    #[tracing::instrument(skip_all)]
+    async fn exec_sandboxed_shell(
+        &self,
+        request: Request<ShellRequest>,
+    ) -> Result<Response<Self::ExecSandboxedShellStream>, Status> {
+        Ok(Response::new(shell_events(
+            request.into_inner(),
+            Confinement::ReadOnlySandbox,
+        )))
     }
 }
 
-fn shell_events(
-    request: ShellRequest,
-) -> Pin<Box<dyn Stream<Item = Result<ShellEvent, Status>> + Send>> {
+fn shell_events(request: ShellRequest, confinement: Confinement) -> ShellEventStream {
     Box::pin(async_stream::try_stream! {
         let ShellRequest {
             command,
@@ -72,7 +89,9 @@ fn shell_events(
                 env_clear,
                 env_remove,
                 envs,
-            )?;
+                confinement,
+            )
+            .await?;
             yield shell_event(Event::Stdout(Bytes::from_static(b"Background command started")));
             yield shell_event(Event::ExitCode(0));
             return;
@@ -85,8 +104,10 @@ fn shell_events(
             env_clear,
             env_remove,
             envs,
+            confinement,
         )?;
         command_process.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let start_report = confinement.expect_start_report(&mut command_process)?;
 
         let mut command_process = CommandWrap::from(command_process);
         command_process.wrap(ProcessGroup::leader());
@@ -98,6 +119,7 @@ fn shell_events(
         let stdout = child.stdout().take().expect("stdout is configured as piped");
         let stderr = child.stderr().take().expect("stderr is configured as piped");
         let mut process = CommandGuard::new(child);
+        start_report.confirmed().await?;
         let stdout = ReaderStream::new(stdout).map(|chunk| {
             chunk.map(|bytes| {
                 tracing::info!(stream = "stdout", bytes = bytes.len(), "Captured command output");
@@ -195,16 +217,17 @@ fn wait_error(err: std::io::Error) -> Status {
     Status::internal(format!("Failed to wait for command: {err}"))
 }
 
-fn spawn_background_command(
+async fn spawn_background_command(
     command: String,
     workdir: &Path,
     has_bash: bool,
     env_clear: bool,
     env_remove: Vec<String>,
     envs: HashMap<String, String>,
+    confinement: Confinement,
 ) -> Result<(), Status> {
     tracing::info!("Running command in background");
-    let mut process = Command::new(if has_bash { "/bin/bash" } else { "sh" });
+    let mut process = confinement.command(if has_bash { "/bin/bash" } else { "sh" });
     if has_bash {
         process.arg("--login");
     }
@@ -215,10 +238,13 @@ fn spawn_background_command(
         .current_dir(workdir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    let start_report = confinement.expect_start_report(&mut process)?;
+    process
         .spawn()
         .map_err(|err| Status::internal(format!("Failed to start background command: {err}")))?;
-    Ok(())
+    drop(process);
+    start_report.confirmed().await
 }
 
 fn build_command(
@@ -228,6 +254,7 @@ fn build_command(
     env_clear: bool,
     env_remove: Vec<String>,
     envs: HashMap<String, String>,
+    confinement: Confinement,
 ) -> Result<(Command, Option<tempfile::TempDir>), Status> {
     let first_line = command.lines().next();
     let mut temp_script = None;
@@ -247,7 +274,7 @@ fn build_command(
         temp_script = Some(script_dir);
 
         if has_bash && is_bash_shebang(first_line) {
-            let mut process = Command::new("/bin/bash");
+            let mut process = confinement.command("/bin/bash");
             process.arg("--login");
             if let Some(args) = shebang_args(first_line) {
                 process.args(args);
@@ -258,13 +285,13 @@ fn build_command(
             let (interpreter, args) = shebang_command(first_line).ok_or_else(|| {
                 Status::internal(format!("Failed to parse shebang: {first_line}"))
             })?;
-            let mut process = Command::new(interpreter);
+            let mut process = confinement.command(interpreter);
             process.args(args).arg(script_path);
             process
         }
     } else {
         tracing::info!("no shebang detected; running as command");
-        let mut process = Command::new(if has_bash { "/bin/bash" } else { "sh" });
+        let mut process = confinement.command(if has_bash { "/bin/bash" } else { "sh" });
         if has_bash {
             process.arg("--login");
         }
