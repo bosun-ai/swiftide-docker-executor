@@ -1364,3 +1364,161 @@ socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", ("127.0.0.1", {por
     outcome.assert_succeeded();
     receiver.recv(&mut [0; 1]).unwrap();
 }
+
+/// Protocols the kernel adds later can fall back to TCP on the wire, as MPTCP and SMC do, without
+/// Landlock seeing them. So only the ones ordinary programs use may be opened. EACCES rather than
+/// EPROTONOSUPPORT shows the filter said no, also on a kernel that lacks the protocol.
+#[tokio::test]
+async fn socket_protocols_outside_the_allowlist_are_denied() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+
+    let outcome = service
+        .sandboxed(workspace.request(python(
+            r#"
+import errno, socket
+AF_NETLINK = 16
+for family, protocol, name in [
+    (socket.AF_INET, 256, "IPPROTO_SMC"),
+    (socket.AF_INET6, 256, "IPPROTO_SMC v6"),
+    (socket.AF_INET, 262, "IPPROTO_MPTCP"),
+    (socket.AF_INET, 132, "IPPROTO_SCTP"),
+    (socket.AF_INET, 33, "IPPROTO_DCCP"),
+    (socket.AF_INET, 136, "IPPROTO_UDPLITE"),
+    (socket.AF_INET, 2, "IPPROTO_IGMP"),
+    (AF_NETLINK, 9, "NETLINK_AUDIT"),
+    (AF_NETLINK, 16, "NETLINK_GENERIC"),
+    (AF_NETLINK, 6, "NETLINK_XFRM"),
+]:
+    try:
+        socket.socket(family, socket.SOCK_DGRAM if family == AF_NETLINK else socket.SOCK_STREAM, protocol)
+        print(name, "opened")
+    except OSError as error:
+        if error.errno != errno.EACCES:
+            print(name, errno.errorcode[error.errno])
+"#,
+        )))
+        .await
+        .unwrap();
+
+    outcome.assert_succeeded();
+    assert_eq!(outcome.stdout, "", "{outcome:#?}");
+}
+
+#[tokio::test]
+async fn the_protocols_ordinary_programs_use_stay_available() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+
+    let outcome = service
+        .sandboxed(workspace.request(python(
+            r#"
+import socket
+for family, kind, protocol in [
+    (socket.AF_UNIX, socket.SOCK_STREAM, 0),
+    (socket.AF_UNIX, socket.SOCK_DGRAM, 0),
+    (socket.AF_INET, socket.SOCK_STREAM, 0),
+    (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP),
+    (socket.AF_INET, socket.SOCK_DGRAM, 0),
+    (socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP),
+    (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP),
+    (socket.AF_INET6, socket.SOCK_DGRAM, socket.IPPROTO_UDP),
+    (16, socket.SOCK_RAW, 0),
+]:
+    socket.socket(family, kind, protocol).close()
+print("all opened")
+"#,
+        )))
+        .await
+        .unwrap();
+
+    assert!(outcome.stdout.contains("all opened"), "{outcome:#?}");
+}
+
+/// An upper layer protocol swaps how the socket works underneath, where Landlock does not look.
+#[tokio::test]
+async fn setting_a_tcp_upper_layer_protocol_is_denied() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+
+    let outcome = service
+        .sandboxed(workspace.request(python(
+            r#"
+import errno, socket
+TCP_ULP = 31
+s = socket.socket()
+try:
+    s.setsockopt(socket.IPPROTO_TCP, TCP_ULP, b"tls")
+    print("set")
+except OSError as error:
+    print(errno.errorcode[error.errno])
+s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+print("other options work")
+"#,
+        )))
+        .await
+        .unwrap();
+
+    let stdout = &outcome.stdout;
+    assert!(stdout.starts_with("EACCES"), "{outcome:#?}");
+    assert!(stdout.contains("other options work"), "{outcome:#?}");
+}
+
+/// `listen` on an unbound socket picks a port itself, which Landlock's `bind` rule does not see.
+/// Seccomp cannot tell a TCP socket from a Unix one here, so listening is denied altogether.
+#[tokio::test]
+async fn a_sandboxed_shell_cannot_listen_for_connections() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+
+    let outcome = service
+        .sandboxed(workspace.request(python(
+            r#"
+import errno, os, socket
+def attempt(name, make):
+    try:
+        make().listen()
+        print(name, "listening")
+    except OSError as error:
+        print(name, errno.errorcode[error.errno])
+def unix():
+    s = socket.socket(socket.AF_UNIX)
+    s.bind(os.environ["TMPDIR"] + "/listener" + str(os.getpid()))
+    return s
+attempt("tcp", socket.socket)
+attempt("tcp6", lambda: socket.socket(socket.AF_INET6))
+attempt("unix", unix)
+"#,
+        )))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome.stdout, "tcp EACCES\ntcp6 EACCES\nunix EACCES\n",
+        "{outcome:#?}"
+    );
+}
+
+/// What nobody should lose to the rule above: git reading a repository needs no listener.
+#[tokio::test]
+async fn git_still_reads_a_repository_without_being_able_to_listen() {
+    let service = Service::start().await;
+    let workspace = Workspace::new();
+    let setup = service
+        .normal(workspace.request(
+            "git init -q repo && cd repo && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m first && echo x > f",
+        ))
+        .await
+        .unwrap();
+    setup.assert_succeeded();
+
+    let outcome = service
+        .sandboxed(workspace.request(
+            "cd repo && git log --oneline && git status --short && git diff && git rev-parse HEAD",
+        ))
+        .await
+        .unwrap();
+
+    outcome.assert_succeeded();
+    assert!(outcome.stdout.contains("first"), "{outcome:#?}");
+}

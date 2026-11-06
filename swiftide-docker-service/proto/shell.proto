@@ -22,16 +22,15 @@ service ShellExecutor {
   // Enforced policy:
   // - Reads and execution are allowed everywhere.
   // - Writes, including truncate, create, remove and rename, are denied everywhere except on /dev/null, /dev/zero, /dev/full and /dev/tty, and beneath /tmp/read-only-shell, which TMPDIR, TMP, TEMP and TEMPDIR point to. The rest of /tmp is read-only, so tools that hardcode /tmp fail with a permission error. A sandboxed process can outlive its call, and writing to all of /tmp would let it change what unsandboxed commands of the same user run or read from there.
-  // - TCP bind and connect are denied, so the shell cannot reach this service's own unauthenticated gRPC port or a rootless Docker daemon on localhost. Landlock covers connect and bind; a seccomp filter covers what Landlock ABI 4 misses, namely TCP fast open, multipath TCP and socket families other than Unix, IPv4, IPv6 and netlink. It also denies io_uring and kills anything using 32-bit system calls.
+  // - TCP connect, bind and listen are denied, so the shell cannot reach this service's own unauthenticated gRPC port or a rootless Docker daemon on localhost. Seccomp also denies what Landlock misses: TCP fast open, multipath TCP, SMC, TCP_ULP and io_uring. Socket families and protocols are allowlists. listen is denied for Unix sockets too, since seccomp cannot tell them apart.
   // - no_new_privs is set and all capabilities are cleared, so a root shell in a privileged pod cannot lift the sandbox. Root also loses its bypass of file permissions: files whose mode bits deny its uid cannot be read.
   //
   // Known limits, not solved here (see the README):
-  // - Unix domain sockets stay reachable. That includes a git credential cache socket, and so the git token, and a mounted Docker socket, which gives full control of that Docker daemon. Containers started by DockerExecutor have one by default.
+  // - Unix domain sockets stay reachable. That includes a git credential cache socket, and so the git token, and a mounted Docker socket, which gives full control of that Docker daemon. Containers started by DockerExecutor have one by default. Daemons left listening by earlier unsandboxed commands stay reachable.
   // - UDP and DNS stay open, so data can leave over them.
   // - Secrets in the environment, and anything else readable on disk, stay readable.
   // - Landlock does not restrict chmod, chown, utimes or xattr changes on files the user owns.
   // - Signals are not restricted: the shell can kill processes of the same user, this service too.
-  // - listen() without bind() still gets an ephemeral TCP port.
   // - /tmp/read-only-shell is shared by sandboxed commands, and a write-capable command of the same user can put things in it, so do not trust its contents. A shell can also chmod it, which makes later sandboxed calls fail closed.
   rpc ExecSandboxedShell (ShellRequest) returns (stream ShellEvent) {}
 }

@@ -62,6 +62,7 @@ const LANDLOCK_CREATE_RULESET_VERSION: libc::c_ulong = 1;
 const X32_SYSCALL_BIT: i64 = 0x4000_0000;
 const X32_SENDMSG: i64 = 518;
 const X32_SENDMMSG: i64 = 538;
+const X32_SETSOCKOPT: i64 = 541;
 
 const SANDBOX_FAILED: u8 = b'S';
 const EXEC_FAILED: u8 = b'E';
@@ -235,15 +236,18 @@ fn open_private_directory(path: &Path) -> Result<File, String> {
 }
 
 /// Landlock ABI 4 guards the `connect` and `bind` calls on plain TCP sockets, which leaves ways to
-/// open a TCP connection that it never sees. Each reaches a local listener, such as this service's
-/// gRPC port, and so would escape the sandbox:
+/// open or accept a TCP connection that it never sees. Each reaches a local listener, such as this
+/// service's gRPC port, or lets something reach the shell, and so would escape the sandbox:
 /// - TCP fast open connects from `sendto`, `sendmsg` or `sendmmsg` with `MSG_FASTOPEN`.
 /// - Multipath TCP and SMC sockets are not TCP to Landlock, but fall back to TCP on the wire.
+/// - An upper layer protocol set through `TCP_ULP` changes how a socket works underneath.
+/// - `listen` on an unbound socket picks a port itself, with no `bind` to deny. Seccomp cannot tell
+///   a TCP socket from a Unix one here, so listening is denied for both.
 /// - io_uring can do all of the above, out of sight of seccomp, so it is denied altogether.
 ///
-/// Socket families are an allowlist because others may offer similar routes, and raw sockets
-/// already need a capability the shell no longer has. The filter's architecture check kills
-/// anything using 32-bit system calls, whose numbers these rules do not cover.
+/// Socket families and protocols are allowlists because a later kernel may offer similar routes,
+/// and raw sockets already need a capability the shell no longer has. The filter's architecture
+/// check kills anything using 32-bit system calls, whose numbers these rules do not cover.
 fn deny_tcp_around_landlock() -> Result<(), Box<dyn Error>> {
     let fast_open = |flags_arg| -> Result<_, seccompiler::BackendError> {
         Ok(vec![SeccompRule::new(vec![SeccompCondition::new(
@@ -253,28 +257,59 @@ fn deny_tcp_around_landlock() -> Result<(), Box<dyn Error>> {
             libc::MSG_FASTOPEN as u64,
         )?])?])
     };
-    let socket_rule =
+    let condition =
         |arg, op, value| SeccompCondition::new(arg, SeccompCmpArgLen::Dword, op, value as u64);
-    let family_not_allowed = SeccompRule::new(
-        [
+    let none_of = |arg, values: &[libc::c_int]| {
+        values
+            .iter()
+            .map(|value| condition(arg, SeccompCmpOp::Ne, *value))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let family_not_allowed = SeccompRule::new(none_of(
+        0,
+        &[
             libc::AF_UNIX,
             libc::AF_INET,
             libc::AF_INET6,
             libc::AF_NETLINK,
-        ]
-        .into_iter()
-        .map(|family| socket_rule(0, SeccompCmpOp::Ne, family))
-        .collect::<Result<_, _>>()?,
-    )?;
-    let multipath_tcp =
-        SeccompRule::new(vec![socket_rule(2, SeccompCmpOp::Eq, libc::IPPROTO_MPTCP)?])?;
+        ],
+    )?)?;
+    let protocol_not_allowed = SeccompRule::new(none_of(
+        2,
+        &[
+            0,
+            libc::IPPROTO_ICMP,
+            libc::IPPROTO_TCP,
+            libc::IPPROTO_UDP,
+            libc::IPPROTO_ICMPV6,
+        ],
+    )?)?;
+    // Netlink numbers its protocols differently. Name resolution only needs the routing one.
+    let netlink_beyond_routing = SeccompRule::new(vec![
+        condition(0, SeccompCmpOp::Eq, libc::AF_NETLINK)?,
+        condition(2, SeccompCmpOp::Ne, libc::NETLINK_ROUTE)?,
+    ])?;
+    let upper_layer_protocol = SeccompRule::new(vec![
+        condition(1, SeccompCmpOp::Eq, libc::IPPROTO_TCP)?,
+        condition(2, SeccompCmpOp::Eq, libc::TCP_ULP)?,
+    ])?;
 
     let rules = [
         (
             libc::SYS_socket,
             libc::SYS_socket,
-            vec![family_not_allowed, multipath_tcp],
+            vec![
+                family_not_allowed,
+                protocol_not_allowed,
+                netlink_beyond_routing,
+            ],
         ),
+        (
+            libc::SYS_setsockopt,
+            X32_SETSOCKOPT,
+            vec![upper_layer_protocol],
+        ),
+        (libc::SYS_listen, libc::SYS_listen, Vec::new()),
         (libc::SYS_sendto, libc::SYS_sendto, fast_open(3)?),
         (libc::SYS_sendmsg, X32_SENDMSG, fast_open(2)?),
         (libc::SYS_sendmmsg, X32_SENDMMSG, fast_open(3)?),
