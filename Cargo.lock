@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "swiftide-docker-executor"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "astral-tokio-tar",
@@ -2507,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "swiftide-docker-service"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "async-stream",
  "bytes",
