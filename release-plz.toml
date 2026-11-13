@@ -3,3 +3,15 @@ git_tag_enable = true
 changelog_config = "cliff.toml"
 changelog_path = "./CHANGELOG.md"
 git_tag_name = "v{{ version }}"
+
+# Both crates share one version, so one tag, one GitHub release and one changelog section
+# per release. The executor owns them; the service is only published to crates.io.
+[[package]]
+name = "swiftide-docker-executor"
+changelog_include = ["swiftide-docker-service"]
+
+[[package]]
+name = "swiftide-docker-service"
+git_tag_enable = false
+git_release_enable = false
+changelog_update = false
